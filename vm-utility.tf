@@ -60,9 +60,9 @@ resource "libvirt_cloudinit_disk" "utility_seed" {
   network_config = <<-EOF
     version: 2
     ethernets:
-      eth0:
-        dhcp4: true
-      eth1:
+      ens3:
+        dhcp4: false
+      ens4:
         dhcp4: true
   EOF
 }
@@ -83,7 +83,7 @@ resource "libvirt_domain" "utility" {
   dynamic "disk" {
     for_each = var.enable_cloudinit ? [1] : []
     content {
-      volume_id = "${var.storage_pool_name}/${libvirt_cloudinit_disk.utility_seed[0].name}"
+      volume_id = regex("^[^;]+", libvirt_cloudinit_disk.utility_seed[0].id)
     }
   }
 
