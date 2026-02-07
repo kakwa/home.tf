@@ -48,3 +48,27 @@ variable "talos_download_path" {
   type        = string
   default     = "./images"
 }
+
+variable "enable_cloudinit" {
+  description = "Enable cloud-init seed disk for VMs (user_data, meta_data, network_config)"
+  type        = bool
+  default     = true
+}
+
+variable "bridge_name" {
+  description = "Host bridge device name for bridge-network (e.g. br0)"
+  type        = string
+  default     = "br0"
+}
+
+variable "bridge_interface" {
+  description = "Physical interface to attach to the bridge (e.g. enp0s6)"
+  type        = string
+  default     = "enp0s6"
+}
+
+variable "bridge_manage_netplan" {
+  description = "Create br0 via systemd-networkd (writes to /etc/systemd/network, requires sudo on apply). Debian-friendly."
+  type        = bool
+  default     = true
+}
