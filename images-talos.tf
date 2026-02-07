@@ -27,7 +27,7 @@ resource "utility_file_downloader" "talos_image" {
   filename = "${var.talos_download_path}/${local.talos_image_filename}"
 }
 
-# Create base volume from Talos image
+# Base Talos image in the storage pool.
 resource "libvirt_volume" "talos_base" {
   name   = "talos-base.qcow2"
   pool   = var.storage_pool_name
