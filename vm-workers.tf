@@ -72,7 +72,7 @@ resource "libvirt_domain" "workers" {
   dynamic "disk" {
     for_each = var.enable_cloudinit ? [1] : []
     content {
-      volume_id = "${var.storage_pool_name}/${libvirt_cloudinit_disk.worker_seed[each.key].name}"
+      volume_id = regex("^[^;]+", libvirt_cloudinit_disk.worker_seed[each.key].id)
     }
   }
 
