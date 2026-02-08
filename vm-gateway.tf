@@ -25,6 +25,10 @@ locals {
     "gateway-2" = { memory_mb = 1024, vcpu = 2 }
   }
   gateway_disk_size = 50 * 1024 * 1024 * 1024 # 50GB
+  gateway_static_ips = {
+    "gateway-1" = "192.168.1.11/24"
+    "gateway-2" = "192.168.1.12/24"
+  }
 }
 
 resource "libvirt_volume" "gateway_disk" {
@@ -45,6 +49,13 @@ resource "libvirt_cloudinit_disk" "gateway_seed" {
 
   user_data = <<-EOF
     #cloud-config
+    users:
+      - name: ${var.debian_admin_user}
+        groups: [sudo]
+        shell: /bin/bash
+        ssh_authorized_keys:
+${join("\n", [for k in var.debian_authorized_keys : "          - ${replace(k, "\n", "")}"])}
+
     chpasswd:
       list: |
         root:password
@@ -54,6 +65,10 @@ resource "libvirt_cloudinit_disk" "gateway_seed" {
 
     packages:
       - openssh-server
+      - qemu-guest-agent
+
+    runcmd:
+      - systemctl enable --now qemu-guest-agent
 
     timezone: UTC
   EOF
@@ -67,7 +82,12 @@ resource "libvirt_cloudinit_disk" "gateway_seed" {
     version: 2
     ethernets:
       ens3:
-        dhcp4: false
+        addresses:
+          - ${local.gateway_static_ips[each.key]}
+        gateway4: 192.168.1.254
+        nameservers:
+          addresses:
+            - 192.168.1.254
       ens4:
         dhcp4: true
   EOF
@@ -98,7 +118,6 @@ resource "libvirt_domain" "gateway" {
   # First NIC: bridge-network (eth0)
   network_interface {
     network_id     = libvirt_network.bridge_network.id
-    wait_for_lease = true
   }
 
   # Second NIC: talos network (eth1)
