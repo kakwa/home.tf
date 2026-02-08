@@ -39,6 +39,13 @@ resource "libvirt_cloudinit_disk" "utility_seed" {
 
   user_data = <<-EOF
     #cloud-config
+    users:
+      - name: ${var.debian_admin_user}
+        groups: [sudo]
+        shell: /bin/bash
+        ssh_authorized_keys:
+${join("\n", [for k in var.debian_authorized_keys : "          - ${replace(k, "\n", "")}"])}
+
     chpasswd:
       list: |
         root:password
@@ -48,6 +55,10 @@ resource "libvirt_cloudinit_disk" "utility_seed" {
 
     packages:
       - openssh-server
+      - qemu-guest-agent
+
+    runcmd:
+      - systemctl enable --now qemu-guest-agent
 
     timezone: UTC
   EOF
@@ -61,7 +72,12 @@ resource "libvirt_cloudinit_disk" "utility_seed" {
     version: 2
     ethernets:
       ens3:
-        dhcp4: false
+        addresses:
+          - 192.168.1.13/24
+        gateway4: 192.168.1.254
+        nameservers:
+          addresses:
+            - 192.168.1.254
       ens4:
         dhcp4: true
   EOF
@@ -90,7 +106,6 @@ resource "libvirt_domain" "utility" {
   # First NIC: bridge-network (eth0)
   network_interface {
     network_id     = libvirt_network.bridge_network.id
-    wait_for_lease = true
   }
 
   # Second NIC: talos network (eth1)
