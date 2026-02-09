@@ -1,47 +1,50 @@
-# Debian cloud image (Trixie = Debian 13)
+# Debian cloud image (Trixie = Debian 13) - libvirt pulls directly from URL.
 locals {
   debian_image_filename = "debian-13-generic-amd64.qcow2"
   debian_image_url      = "https://cloud.debian.org/images/cloud/trixie/latest/${local.debian_image_filename}"
 }
 
-resource "utility_file_downloader" "debian_image" {
-  url      = local.debian_image_url
-  filename = "${var.talos_download_path}/${local.debian_image_filename}"
-}
-
+# Debian base image in mid-pool (create from cloud URL, like Ubuntu cloud img example).
 resource "libvirt_volume" "debian_base" {
-  name   = "debian-base.qcow2"
-  pool   = var.storage_pool_name
-  source = utility_file_downloader.debian_image.filename
-  format = "qcow2"
-
-  depends_on = [utility_file_downloader.debian_image]
+  name = "debian-base.qcow2"
+  pool = var.storage_pool_name
+  create = {
+    content = {
+      url = local.debian_image_url
+    }
+  }
+  target = {
+    format = { type = "qcow2" }
+  }
 }
 
-# Gateway VMs: 50GB disk, 2 NICs (bridge-network + talos)
+# Gateway VMs: boot disk with backing_store = debian_base (grows as needed), 2 NICs
 locals {
   gateway_vms = {
     "gateway-1" = { memory_mb = 1024, vcpu = 2 }
     "gateway-2" = { memory_mb = 1024, vcpu = 2 }
   }
-  gateway_disk_size = 50 * 1024 * 1024 * 1024 # 50GB
 }
 
 resource "libvirt_volume" "gateway_disk" {
   for_each = local.gateway_vms
 
-  name           = "${each.key}-disk.qcow2"
-  pool           = var.storage_pool_name
-  base_volume_id = libvirt_volume.debian_base.id
-  size           = local.gateway_disk_size
-  format         = "qcow2"
+  name     = "${each.key}-disk.qcow2"
+  pool     = var.storage_pool_name
+  capacity = 53687091200 # 50GB
+  backing_store = {
+    path   = libvirt_volume.debian_base.path
+    format = { type = "qcow2" }
+  }
+  target = {
+    format = { type = "qcow2" }
+  }
 }
 
 resource "libvirt_cloudinit_disk" "gateway_seed" {
   for_each = var.enable_cloudinit ? local.gateway_vms : {}
 
   name = "${each.key}-cloudinit"
-  pool = var.storage_pool_name
 
   user_data = <<-EOF
     #cloud-config
@@ -78,65 +81,126 @@ ${join("\n", [for k in var.debian_authorized_keys : "          - ${replace(k, "\
   network_config = <<-EOF
     version: 2
     ethernets:
-      ens3:
+      enp1s0:
         addresses:
           - ${var.gateway_static_ips[each.key]}
         gateway4: 192.168.1.254
         nameservers:
           addresses:
             - 192.168.1.254
-      ens4:
+      enp2s0:
         dhcp4: true
   EOF
+}
+
+# Upload cloud-init ISO into pool (libvirt 0.9: cloudinit_disk has no pool; use a volume).
+resource "libvirt_volume" "gateway_seed_volume" {
+  for_each = var.enable_cloudinit ? local.gateway_vms : {}
+
+  name = "${each.key}-cloudinit.iso"
+  pool = var.cloudinit_storage_pool_name
+  create = {
+    content = {
+      url = "file://${libvirt_cloudinit_disk.gateway_seed[each.key].path}"
+    }
+  }
 }
 
 resource "libvirt_domain" "gateway" {
   for_each = local.gateway_vms
 
   name      = each.key
-  autostart = true
-  memory    = each.value.memory_mb
+  type      = "kvm"
+  memory    = each.value.memory_mb * 1024 # KiB
   vcpu      = each.value.vcpu
+  running   = true
+  autostart = true
 
-  cpu {
+  os = {
+    type         = "hvm"
+    type_arch    = "x86_64"
+    type_machine = "q35"
+  }
+  features = {
+    acpi = true
+  }
+  cpu = {
     mode = "host-passthrough"
   }
 
-  disk {
-    volume_id = libvirt_volume.gateway_disk[each.key].id
-  }
-
-  dynamic "disk" {
-    for_each = var.enable_cloudinit ? [1] : []
-    content {
-      volume_id = regex("^[^;]+", libvirt_cloudinit_disk.gateway_seed[each.key].id)
-    }
-  }
-
-  # First NIC: bridge-network (eth0)
-  network_interface {
-    network_id = libvirt_network.bridge_network.id
-  }
-
-  # Second NIC: talos network (eth1)
-  network_interface {
-    network_id     = libvirt_network.talos_network.id
-    wait_for_lease = true
-  }
-
-  console {
-    type        = "pty"
-    target_port = "0"
-    target_type = "serial"
-  }
-
-  video {
-    type = "virtio"
-  }
-
-  graphics {
-    type        = "spice"
-    listen_type = "address"
-    autoport    = true
+  devices = {
+    disks = concat(
+      [
+        {
+          source = {
+            volume = {
+              pool   = libvirt_volume.gateway_disk[each.key].pool
+              volume = libvirt_volume.gateway_disk[each.key].name
+            }
+          }
+          target = { dev = "vda", bus = "virtio" }
+          driver = { type = "qcow2" }
+        }
+      ],
+      var.enable_cloudinit ? [
+        {
+          device = "cdrom"
+          source = {
+            volume = {
+              pool   = libvirt_volume.gateway_seed_volume[each.key].pool
+              volume = libvirt_volume.gateway_seed_volume[each.key].name
+            }
+          }
+          target = { dev = "sda", bus = "sata" }
+        }
+      ] : []
+    )
+    interfaces = [
+      {
+        type  = "network"
+        model = { type = "virtio" }
+        source = {
+          network = {
+            network = libvirt_network.bridge_network.name
+          }
+        }
+      },
+      {
+        type  = "network"
+        model = { type = "virtio" }
+        source = {
+          network = {
+            network = libvirt_network.talos_network.name
+          }
+        }
+        wait_for_ip = { timeout = 300, source = "any" }
+      }
+    ]
+    consoles = [
+      {
+        type   = "pty"
+        target = { type = "serial", port = "0" }
+      }
+    ]
+    videos = [
+      { model = { type = "virtio" } }
+    ]
+    graphics = [
+      {
+        spice = {
+          autoport = "no"
+          port     = 5920 + index(sort(keys(local.gateway_vms)), each.key)
+          listen   = var.vm_spice_listen
+          listeners = [
+            {
+              type = "address"
+              address = {
+                address = var.vm_spice_listen
+              }
+            }
+          ]
+        }
+      }
+    ]
   }
 }

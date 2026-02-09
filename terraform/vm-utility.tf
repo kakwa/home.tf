@@ -20,22 +20,26 @@ locals {
     memory_mb = 1024
     vcpu      = 2
   }
-  utility_disk_size = 50 * 1024 * 1024 * 1024 # 50GB
 }
 
+# Boot disk (backing store = debian_base, grows as needed).
 resource "libvirt_volume" "utility_disk" {
-  name           = "utility-disk.qcow2"
-  pool           = var.storage_pool_name
-  base_volume_id = libvirt_volume.debian_base.id
-  size           = local.utility_disk_size
-  format         = "qcow2"
+  name     = "utility-disk.qcow2"
+  pool     = var.storage_pool_name
+  capacity = 53687091200 # 50GB
+  backing_store = {
+    path   = libvirt_volume.debian_base.path
+    format = { type = "qcow2" }
+  }
+  target = {
+    format = { type = "qcow2" }
+  }
 }
 
 resource "libvirt_cloudinit_disk" "utility_seed" {
   count = var.enable_cloudinit ? 1 : 0
 
   name = "utility-cloudinit"
-  pool = var.storage_pool_name
 
   user_data = <<-EOF
     #cloud-config
@@ -71,63 +75,123 @@ ${join("\n", [for k in var.debian_authorized_keys : "          - ${replace(k, "\
   network_config = <<-EOF
     version: 2
     ethernets:
-      ens3:
+      enp1s0:
         addresses:
           - ${var.utility_static_ip}
         gateway4: 192.168.1.254
         nameservers:
           addresses:
             - 192.168.1.254
-      ens4:
+      enp2s0:
         dhcp4: true
   EOF
 }
 
+resource "libvirt_volume" "utility_seed_volume" {
+  count = var.enable_cloudinit ? 1 : 0
+
+  name = "utility-cloudinit.iso"
+  pool = var.cloudinit_storage_pool_name
+  create = {
+    content = {
+      url = "file://${libvirt_cloudinit_disk.utility_seed[0].path}"
+    }
+  }
+}
+
 resource "libvirt_domain" "utility" {
   name      = "utility"
-  autostart = true
-  memory    = local.utility_vm.memory_mb
+  type      = "kvm"
+  memory    = local.utility_vm.memory_mb * 1024 # KiB
   vcpu      = local.utility_vm.vcpu
+  running   = true
+  autostart = true
 
-  cpu {
+  os = {
+    type         = "hvm"
+    type_arch    = "x86_64"
+    type_machine = "q35"
+  }
+  features = {
+    acpi = true
+  }
+  cpu = {
     mode = "host-passthrough"
   }
 
-  disk {
-    volume_id = libvirt_volume.utility_disk.id
-  }
-
-  dynamic "disk" {
-    for_each = var.enable_cloudinit ? [1] : []
-    content {
-      volume_id = regex("^[^;]+", libvirt_cloudinit_disk.utility_seed[0].id)
-    }
-  }
-
-  # First NIC: bridge-network (eth0)
-  network_interface {
-    network_id = libvirt_network.bridge_network.id
-  }
-
-  # Second NIC: talos network (eth1)
-  network_interface {
-    network_id     = libvirt_network.talos_network.id
-    wait_for_lease = true
-  }
-
-  console {
-    type        = "pty"
-    target_port = "0"
-    target_type = "serial"
-  }
-
-  video {
-    type = "virtio"
-  }
-
-  graphics {
-    type        = "spice"
-    listen_type = "address"
-    autoport    = true
+  devices = {
+    disks = concat(
+      [
+        {
+          source = {
+            volume = {
+              pool   = libvirt_volume.utility_disk.pool
+              volume = libvirt_volume.utility_disk.name
+            }
+          }
+          target = { dev = "vda", bus = "virtio" }
+          driver = { type = "qcow2" }
+        }
+      ],
+      var.enable_cloudinit ? [
+        {
+          device = "cdrom"
+          source = {
+            volume = {
+              pool   = libvirt_volume.utility_seed_volume[0].pool
+              volume = libvirt_volume.utility_seed_volume[0].name
+            }
+          }
+          target = { dev = "sda", bus = "sata" }
+        }
+      ] : []
+    )
+    interfaces = [
+      {
+        type  = "network"
+        model = { type = "virtio" }
+        source = {
+          network = {
+            network = libvirt_network.bridge_network.name
+          }
+        }
+      },
+      {
+        type  = "network"
+        model = { type = "virtio" }
+        source = {
+          network = {
+            network = libvirt_network.talos_network.name
+          }
+        }
+        wait_for_ip = { timeout = 300, source = "any" }
+      }
+    ]
+    consoles = [
+      {
+        type   = "pty"
+        target = { type = "serial", port = "0" }
+      }
+    ]
+    videos = [
+      { model = { type = "virtio" } }
+    ]
+    graphics = [
+      {
+        spice = {
+          autoport = "no"
+          port     = 5930
+          listen   = var.vm_spice_listen
+          listeners = [
+            {
+              type = "address"
+              address = {
+                address = var.vm_spice_listen
+              }
+            }
+          ]
+        }
+      }
+    ]
   }
 }
