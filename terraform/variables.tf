@@ -16,6 +16,12 @@ variable "storage_pool_name" {
   default     = "mid-pool"
 }
 
+variable "cloudinit_storage_pool_name" {
+  description = "Storage pool name for cloud-init seed volumes (ISOs)"
+  type        = string
+  default     = "slow-pool"
+}
+
 variable "talos_version" {
   description = "Talos version to use"
   type        = string
@@ -100,4 +106,16 @@ variable "debian_authorized_keys" {
   default = [
     "ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAzODQAAAAIbmlzdHAzODQAAABhBIefJ3PQVyfXunlkWc6Ukdw8EZNw8sLX1Pda0p+PckY/maze5K298CiSuE+5LR/9RM5lwx8N8NqnuKTUUSHsfs58jI03RNAuFHaT4Sc6PKS7SfG9t3ZDkCVSdn5Csopwgg== kakwa@tsingtao"
   ]
+}
+
+variable "vm_spice_listen" {
+  description = "SPICE listen address (127.0.0.1 = localhost only; use SSH port-forward to connect remotely)"
+  type        = string
+  default     = "127.0.0.1"
+}
+
+variable "vm_spice_port_base" {
+  description = "Base port for SPICE (each VM gets a unique port: control-plane 5900+, workers 5910+, gateway 5920+, utility 5930)"
+  type        = number
+  default     = 5900
 }

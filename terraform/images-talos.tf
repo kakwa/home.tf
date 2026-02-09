@@ -21,20 +21,18 @@ locals {
   talos_image_url      = "https://factory.talos.dev/image/${talos_image_factory_schematic.this.id}/${var.talos_version}/${var.talos_platform}-${var.talos_architecture}.qcow2"
 }
 
-# Download the Talos image locally
-resource "utility_file_downloader" "talos_image" {
-  url      = local.talos_image_url
-  filename = "${var.talos_download_path}/${local.talos_image_filename}"
-}
-
-# Base Talos image in the storage pool.
+# Talos base image in mid-pool (libvirt pulls directly from Image Factory URL).
 resource "libvirt_volume" "talos_base" {
-  name   = "talos-base.qcow2"
-  pool   = var.storage_pool_name
-  source = utility_file_downloader.talos_image.filename
-  format = "qcow2"
-
-  depends_on = [utility_file_downloader.talos_image]
+  name = "talos-base.qcow2"
+  pool = var.storage_pool_name
+  create = {
+    content = {
+      url = local.talos_image_url
+    }
+  }
+  target = {
+    format = { type = "qcow2" }
+  }
 }
 
 # Outputs
@@ -49,8 +47,8 @@ output "talos_schematic_id" {
 }
 
 output "talos_image_path" {
-  description = "Path to the downloaded Talos image"
-  value       = utility_file_downloader.talos_image.filename
+  description = "Path to the Talos base image in pool"
+  value       = libvirt_volume.talos_base.path
 }
 
 output "talos_image_url" {
