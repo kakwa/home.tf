@@ -1,0 +1,85 @@
+---
+# Install avahi packages
+- name: Install avahi packages
+  apt:
+    name: "{{ avahi_packages }}"
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+
+# Configure avahi daemon
+- name: Configure avahi-daemon
+  template:
+    src: avahi-daemon.conf.j2
+    dest: /etc/avahi/avahi-daemon.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart avahi-daemon
+
+# Set hostname if specified
+- name: Set custom hostname in avahi
+  lineinfile:
+    path: /etc/avahi/avahi-daemon.conf
+    regexp: '^#?host-name='
+    line: "host-name={{ avahi_hostname }}"
+    state: present
+  notify: restart avahi-daemon
+  when: avahi_hostname | length > 0
+
+# Create additional hostname CNAME records
+- name: Create CNAME records for additional hostnames
+  template:
+    src: cname.service.j2
+    dest: "/etc/avahi/services/kvm.service"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart avahi-daemon
+
+# Enable NSS mDNS resolution
+- name: Check if nsswitch.conf has mdns
+  shell: grep -q 'mdns' /etc/nsswitch.conf
+  register: nsswitch_mdns
+  changed_when: false
+  failed_when: false
+
+- name: Enable mDNS in nsswitch.conf
+  lineinfile:
+    path: /etc/nsswitch.conf
+    regexp: '^hosts:'
+    line: 'hosts:          files mdns4_minimal [NOTFOUND=return] dns mdns4'
+    state: present
+    backup: yes
+  when: nsswitch_mdns.rc != 0
+
+# Enable and start avahi daemon
+- name: Enable and start avahi-daemon
+  systemd:
+    name: avahi-daemon
+    enabled: "{{ avahi_service_enabled }}"
+    state: "{{ avahi_service_state }}"
+
+# Display configuration
+- name: Get hostname
+  command: hostname
+  register: system_hostname
+  changed_when: false
+
+- name: Get avahi status
+  command: avahi-browse -at -r --no-db-lookup
+  register: avahi_services
+  changed_when: false
+  failed_when: false
+  async: 5
+  poll: 0
+
+- name: Display avahi configuration summary
+  debug:
+    msg:
+      - "=== Avahi Configuration Summary ==="
+      - "System hostname: {{ system_hostname.stdout }}.local"
+      - ""
+      - "You can now access this system at:"
+      - "  - {{ system_hostname.stdout }}.local"
+

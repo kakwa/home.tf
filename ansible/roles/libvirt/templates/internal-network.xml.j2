@@ -1,0 +1,8 @@
+<network>
+  <name>{{ item.name }}</name>
+  <forward mode='nat'/>
+  <bridge name='{{ item.bridge_name }}' stp='on' delay='0'/>
+  <domain name='{{ item.domain }}'/>
+  <ip address='{{ item.gateway }}' netmask='{{ item.netmask }}'></ip>
+</network>
+

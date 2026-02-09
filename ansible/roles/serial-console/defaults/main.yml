@@ -1,0 +1,33 @@
+---
+# Serial console configuration defaults
+
+# Serial port device (ttyS0, ttyS1, etc.)
+serial_console_port: "ttyS0"
+
+# Serial port speed (baud rate)
+serial_console_speed: 115200
+
+# Serial port parameters (data bits, parity, stop bits)
+# Format: 8n1 (8 data bits, no parity, 1 stop bit)
+serial_console_params: "8n1"
+
+# GRUB serial command parameters
+grub_serial_unit: 0  # 0 for ttyS0, 1 for ttyS1, etc.
+grub_serial_speed: "{{ serial_console_speed }}"
+grub_serial_word: 8
+grub_serial_parity: "no"
+grub_serial_stop: 1
+
+# GRUB timeout (in seconds)
+grub_timeout: 5
+
+# Enable serial console on GRUB
+grub_serial_enable: true
+
+# Enable getty on serial console
+getty_serial_enable: true
+
+# Console kernel parameters
+# Will be added to GRUB_CMDLINE_LINUX
+console_kernel_params: "console=tty0 console={{ serial_console_port }},{{ serial_console_speed }}n8"
+

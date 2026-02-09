@@ -1,0 +1,72 @@
+---
+# Libvirt/KVM configuration defaults
+
+# Libvirt packages to install
+libvirt_packages:
+  - qemu-kvm
+  - libvirt-daemon-system
+  - libvirt-clients
+  - bridge-utils
+  - virtinst
+  - virt-manager
+  - libvirt-daemon
+  - qemu-utils
+  - libguestfs-tools
+  - virt-top
+
+# Enable and start libvirtd service
+libvirt_service_enabled: true
+libvirt_service_state: started
+
+# User management for libvirt
+libvirt_users: []  # Add users to libvirt and libvirt-qemu groups
+
+# Network configuration
+libvirt_default_network_autostart: true
+libvirt_default_network_state: active
+
+# Additional networks
+libvirt_networks:
+  - name: bridge-network
+    type: bridge
+    bridge_name: virbr-enp6s0
+    interface: enp6s0
+    autostart: true
+    state: active
+  - name: internal-network
+    type: internal
+    bridge_name: virbr-internal
+    domain: internal.local
+    gateway: 192.168.200.1
+    netmask: 255.255.255.0
+    autostart: true
+    state: active
+
+# Storage pools configuration
+libvirt_storage_pools:
+  - name: fast-pool
+    type: dir
+    path: /var/lib/vms/fast-pool
+    autostart: true
+    state: active
+  - name: slow-pool
+    type: dir
+    path: /var/lib/vms/slow-pool
+    autostart: true
+    state: active
+  - name: mid-pool
+    type: dir
+    path: /var/lib/vms/mid-pool
+    autostart: true
+    state: active
+
+# Enable nested virtualization (if supported)
+libvirt_enable_nested_virt: true
+
+# QEMU/KVM tuning
+libvirt_qemu_user: libvirt-qemu
+libvirt_qemu_group: libvirt-qemu
+
+# Security driver (apparmor or selinux)
+libvirt_security_driver: apparmor
+

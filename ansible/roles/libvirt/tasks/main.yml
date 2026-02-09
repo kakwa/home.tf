@@ -1,0 +1,255 @@
+---
+# Check for virtualization support
+- name: Check if CPU supports virtualization
+  shell: |
+    if grep -qE 'vmx|svm' /proc/cpuinfo; then
+      echo "supported"
+    else
+      echo "not_supported"
+    fi
+  register: virt_support
+  changed_when: false
+
+- name: Display virtualization support status
+  debug:
+    msg: "CPU virtualization support: {{ virt_support.stdout }}"
+
+- name: Fail if virtualization is not supported
+  fail:
+    msg: "CPU does not support hardware virtualization (Intel VT-x or AMD-V)"
+  when: virt_support.stdout == "not_supported"
+
+# Install libvirt and KVM packages
+- name: Install libvirt and KVM packages
+  apt:
+    name: "{{ libvirt_packages }}"
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+
+# Create physical bridge for bridge-network
+- name: Create physical bridge for external connectivity
+  block:
+    - name: Check if bridge interface exists
+      shell: ip link show virbr-enp6s0 2>/dev/null || echo "not_found"
+      register: bridge_check
+      changed_when: false
+      failed_when: false
+
+    - name: Create bridge using netctl/nmcli (if bridge doesn't exist)
+      shell: |
+        # Check if interface is already part of a bridge
+        if ! ip link show virbr-enp6s0 >/dev/null 2>&1; then
+          # Create the bridge with brctl
+          brctl addbr virbr-enp6s0 2>/dev/null || true
+          ip link set virbr-enp6s0 up
+          echo "CREATED"
+        else
+          echo "EXISTS"
+        fi
+      register: bridge_create
+      changed_when: "'CREATED' in bridge_create.stdout"
+      failed_when: false
+
+# Enable nested virtualization (Intel)
+- name: Check if nested virtualization is enabled (Intel)
+  shell: cat /sys/module/kvm_intel/parameters/nested 2>/dev/null || echo "N"
+  register: nested_intel
+  changed_when: false
+  failed_when: false
+
+- name: Enable nested virtualization for Intel
+  block:
+    - name: Create modprobe.d configuration for KVM Intel
+      copy:
+        content: "options kvm_intel nested=1\n"
+        dest: /etc/modprobe.d/kvm-intel.conf
+        mode: '0644'
+      notify: reload kvm modules
+
+    - name: Enable nested virtualization immediately (Intel)
+      shell: |
+        echo 1 > /sys/module/kvm_intel/parameters/nested || true
+      changed_when: false
+      failed_when: false
+
+  when:
+    - libvirt_enable_nested_virt | bool
+    - nested_intel.rc == 0
+    - nested_intel.stdout != "Y"
+
+# Enable nested virtualization (AMD)
+- name: Check if nested virtualization is enabled (AMD)
+  shell: cat /sys/module/kvm_amd/parameters/nested 2>/dev/null || echo "0"
+  register: nested_amd
+  changed_when: false
+  failed_when: false
+
+- name: Enable nested virtualization for AMD
+  block:
+    - name: Create modprobe.d configuration for KVM AMD
+      copy:
+        content: "options kvm_amd nested=1\n"
+        dest: /etc/modprobe.d/kvm-amd.conf
+        mode: '0644'
+      notify: reload kvm modules
+
+    - name: Enable nested virtualization immediately (AMD)
+      shell: |
+        echo 1 > /sys/module/kvm_amd/parameters/nested || true
+      changed_when: false
+      failed_when: false
+
+  when:
+    - libvirt_enable_nested_virt | bool
+    - nested_amd.rc == 0
+    - nested_amd.stdout != "1"
+
+# Configure libvirt service
+- name: Enable and start libvirtd service
+  systemd:
+    name: libvirtd
+    enabled: "{{ libvirt_service_enabled }}"
+    state: "{{ libvirt_service_state }}"
+
+- name: Enable and start virtlogd socket
+  systemd:
+    name: virtlogd.socket
+    enabled: yes
+    state: started
+
+# Add users to libvirt groups
+- name: Add users to libvirt groups
+  user:
+    name: "{{ item }}"
+    groups: libvirt,libvirt-qemu
+    append: yes
+  loop: "{{ libvirt_users }}"
+  when: libvirt_users | length > 0
+
+# Configure default network
+- name: Check if default network exists
+  command: virsh net-info default
+  register: default_network
+  changed_when: false
+  failed_when: false
+
+- name: Start default network
+  command: virsh net-start default
+  when:
+    - default_network.rc == 0
+    - "'inactive' in default_network.stdout or 'Active' not in default_network.stdout"
+  failed_when: false
+
+- name: Set default network to autostart
+  command: virsh net-autostart default
+  when:
+    - default_network.rc == 0
+    - libvirt_default_network_autostart | bool
+  changed_when: false
+  failed_when: false
+
+# Configure storage pools
+- name: Check if storage pool paths exist
+  stat:
+    path: "{{ item.path }}"
+  register: storage_pool_paths
+  loop: "{{ libvirt_storage_pools }}"
+  when: item.type == 'dir'
+
+- name: Create storage pool directories if they don't exist
+  file:
+    path: "{{ item.item.path }}"
+    state: directory
+    mode: '0755'
+    owner: "{{ libvirt_qemu_user }}"
+    group: "{{ libvirt_qemu_group }}"
+  loop: "{{ storage_pool_paths.results }}"
+  when:
+    - item.item is defined
+    - item.item.type == 'dir'
+    - not item.stat.exists
+
+- name: Define libvirt storage pools
+  shell: |
+    if ! virsh pool-info {{ item.name }} >/dev/null 2>&1; then
+      virsh pool-define-as {{ item.name }} {{ item.type }} --target {{ item.path }}
+      echo "CHANGED"
+    else
+      echo "EXISTS"
+    fi
+  loop: "{{ libvirt_storage_pools }}"
+  register: pool_define
+  changed_when: "'CHANGED' in pool_define.stdout"
+  failed_when: false
+
+- name: Build libvirt storage pools
+  command: virsh pool-build {{ item.name }}
+  loop: "{{ libvirt_storage_pools }}"
+  register: pool_build
+  changed_when: "'successfully built' in pool_build.stdout"
+  failed_when: false
+
+- name: Start libvirt storage pools
+  shell: |
+    if virsh pool-info {{ item.name }} 2>/dev/null | grep -q 'State:.*inactive'; then
+      virsh pool-start {{ item.name }}
+      echo "STARTED"
+    else
+      echo "ALREADY_ACTIVE"
+    fi
+  loop: "{{ libvirt_storage_pools }}"
+  when: item.state == 'active'
+  register: pool_start
+  changed_when: "'STARTED' in pool_start.stdout"
+  failed_when: false
+
+- name: Get libvirt storage pool autostart status
+  command: virsh pool-info {{ item.name }}
+  loop: "{{ libvirt_storage_pools }}"
+  when: item.autostart | bool
+  register: pool_autostart_status
+  changed_when: false
+  failed_when: false
+
+- name: Set libvirt storage pools to autostart
+  command: virsh pool-autostart {{ item.item.name }}
+  loop: "{{ pool_autostart_status.results }}"
+  when:
+    - item.skipped is not defined or not item.skipped
+    - item.rc == 0
+    - item.stdout is search('Autostart:\\s+no')
+  loop_control:
+    label: "{{ item.item.name }}"
+  changed_when: true
+
+# Display configuration summary
+- name: Get libvirt version
+  command: virsh version
+  register: libvirt_version
+  changed_when: false
+
+- name: Get storage pools list
+  command: virsh pool-list --all
+  register: storage_pools_list
+  changed_when: false
+
+- name: Get networks list
+  command: virsh net-list --all
+  register: networks_list
+  changed_when: false
+
+- name: Display libvirt configuration summary
+  debug:
+    msg:
+      - "=== Libvirt Configuration Summary ==="
+      - "{{ libvirt_version.stdout }}"
+      - ""
+      - "Storage Pools:"
+      - "{{ storage_pools_list.stdout }}"
+      - ""
+      - "Networks:"
+      - "{{ networks_list.stdout }}"
+      - ""
+      - "Nested Virtualization: {{ 'Enabled' if libvirt_enable_nested_virt else 'Disabled' }}"
+

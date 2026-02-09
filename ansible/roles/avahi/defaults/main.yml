@@ -1,0 +1,22 @@
+---
+# Avahi service discovery configuration defaults
+
+# Hostname to announce (without .local suffix)
+# Set to empty string to use system hostname
+avahi_hostname: "kvm"
+
+# Domain to use
+avahi_domain_name: "local"
+
+# Enable and start service
+avahi_service_enabled: true
+avahi_service_state: started
+
+# Avahi packages to install
+avahi_packages:
+  - avahi-daemon
+  - avahi-utils
+  - libnss-mdns
+
+
+
