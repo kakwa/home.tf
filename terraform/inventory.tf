@@ -26,7 +26,7 @@ locals {
   }
   # Ordered lists for env file (cp-1, cp-2, cp-3 and worker-1..worker-6)
   control_plane_ips_list = [for k in sort(keys(local.control_plane_nodes)) : lookup(local.talos_cp_ips, k, "")]
-  worker_ips_list       = [for k in sort(keys(local.worker_nodes)) : lookup(local.talos_worker_ips, k, "")]
+  worker_ips_list        = [for k in sort(keys(local.worker_nodes)) : lookup(local.talos_worker_ips, k, "")]
 }
 
 data "external" "domain_ips" {
@@ -38,13 +38,13 @@ data "external" "domain_ips" {
 
 resource "local_file" "inventory" {
   content = templatefile("${path.module}/inventory.yml.tpl", {
-    gateway_ips        = local.gateway_ips
-    utility_ip         = local.utility_ip
+    gateway_ips         = local.gateway_ips
+    utility_ip          = local.utility_ip
     control_plane_nodes = local.control_plane_nodes
-    worker_nodes       = local.worker_nodes
-    talos_cp_ips       = local.talos_cp_ips
-    talos_worker_ips   = local.talos_worker_ips
-    debian_admin_user  = var.debian_admin_user
+    worker_nodes        = local.worker_nodes
+    talos_cp_ips        = local.talos_cp_ips
+    talos_worker_ips    = local.talos_worker_ips
+    debian_admin_user   = var.debian_admin_user
   })
   filename        = "${path.module}/inventory.yml"
   file_permission = "0644"
@@ -53,7 +53,7 @@ resource "local_file" "inventory" {
 resource "local_file" "env" {
   content = templatefile("${path.module}/env.tpl", {
     control_plane_ips = local.control_plane_ips_list
-    worker_ips       = local.worker_ips_list
+    worker_ips        = local.worker_ips_list
   })
   filename        = "${path.module}/talos-env.sh"
   file_permission = "0644"

@@ -11,7 +11,7 @@ terraform {
       version = "~> 0.7.0"
     }
     utility = {
-      source  = "registry.terraform.io/frontiersgg/utility"
+      source = "registry.terraform.io/frontiersgg/utility"
     }
     local = {
       source  = "hashicorp/local"

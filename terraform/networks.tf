@@ -8,8 +8,8 @@ resource "libvirt_network" "talos_network" {
 
 # Bridge network (uses host bridge for external/LAN access)
 resource "libvirt_network" "bridge_network" {
-  name   = "bridge-network"
-  mode   = "bridge"
+  name      = "bridge-network"
+  mode      = "bridge"
   autostart = true
-  bridge = var.bridge_name
+  bridge    = var.bridge_name
 }
