@@ -1,0 +1,30 @@
+---
+- name: Ensure sshd_config.d exists
+  file:
+    path: /etc/ssh/sshd_config.d
+    state: directory
+    mode: '0755'
+
+- name: Configure PermitRootLogin
+  copy:
+    content: |
+      PermitRootLogin {{ ssh_permit_root_login }}
+    dest: /etc/ssh/sshd_config.d/99-allow-root.conf
+    mode: '0644'
+  notify: restart ssh
+
+- name: Ensure root .ssh directory exists
+  file:
+    path: /root/.ssh
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+
+- name: Set root authorized_keys
+  copy:
+    content: "{{ ssh_root_authorized_keys | join('\n') }}\n"
+    dest: /root/.ssh/authorized_keys
+    mode: '0600'
+    owner: root
+    group: root
