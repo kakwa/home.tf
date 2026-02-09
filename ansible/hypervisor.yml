@@ -5,6 +5,7 @@
   roles:
     - { role: repos, tags: ["system", "repos"] }
     - { role: misc-base, tags: ["system", "misc-base"] }
+    - { role: ssh, tags: ["system", "ssh"] }
     - { role: talos-tools, tags: ["system", "talos-tools"] }
     - { role: serial-console, tags: ["system", "serial-console"] }
     - { role: avahi, tags: ["system", "network", "avahi"] }
@@ -14,3 +15,7 @@
     # WARNING: This will wipe data on configured devices!
     #- { role: lvm, vars: { lvm_enable: true, lvm_force_recreate: true }, tags: ["hypervisor", "storage", "lvm"] }
     - { role: libvirt, tags: ["hypervisor", "virtualization", "libvirt"] }
+    - role: terraform-sync
+      vars:
+        terraform_sync_src: "{{ playbook_dir }}/../terraform"
+      tags: ["hypervisor", "terraform-sync"]
