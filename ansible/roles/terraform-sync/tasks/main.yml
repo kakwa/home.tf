@@ -1,0 +1,43 @@
+---
+- name: Ensure terraform destination parent directory exists
+  file:
+    path: "{{ terraform_sync_dest | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Sync terraform directory to hypervisor
+  synchronize:
+    src: "{{ terraform_sync_src }}/"
+    dest: "{{ terraform_sync_dest }}"
+    delete: yes
+    rsync_opts: "{{ ['--omit-dir-times'] + (terraform_sync_excludes | map('regex_replace', '^', '--exclude=') | list) }}"
+
+- name: Ensure root .bashrc exists before adding cdtf alias
+  file:
+    path: /root/.bashrc
+    state: touch
+    modification_time: preserve
+    access_time: preserve
+
+- name: Add cdtf alias for root in .bashrc
+  lineinfile:
+    path: /root/.bashrc
+    line: "alias cdtf='cd {{ terraform_sync_dest }}'"
+    regexp: "^alias cdtf="
+    state: present
+
+- name: Ensure root .zshrc exists before adding cdtf alias
+  file:
+    path: /root/.zshrc
+    state: touch
+    modification_time: preserve
+    access_time: preserve
+
+- name: Add cdtf alias for root in .zshrc
+  lineinfile:
+    path: /root/.zshrc
+    line: "alias cdtf='cd {{ terraform_sync_dest }}'"
+    regexp: "^alias cdtf="
+    state: present
