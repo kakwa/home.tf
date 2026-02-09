@@ -1,0 +1,16 @@
+---
+- name: Hypervisory Server Setup
+  hosts: all
+  become: true
+  roles:
+    - { role: repos, tags: ["system", "repos"] }
+    - { role: misc-base, tags: ["system", "misc-base"] }
+    - { role: talos-tools, tags: ["system", "talos-tools"] }
+    - { role: serial-console, tags: ["system", "serial-console"] }
+    - { role: avahi, tags: ["system", "network", "avahi"] }
+    - { role: vim, tags: ["system", "vim"] }
+    - { role: zsh, tags: ["system", "zsh"] }
+    # LVM role - set lvm_enable: true when ready to set up storage
+    # WARNING: This will wipe data on configured devices!
+    #- { role: lvm, vars: { lvm_enable: true, lvm_force_recreate: true }, tags: ["hypervisor", "storage", "lvm"] }
+    - { role: libvirt, tags: ["hypervisor", "virtualization", "libvirt"] }

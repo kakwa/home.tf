@@ -1,0 +1,48 @@
+---
+# LVM storage configuration defaults
+# ⚠️  IMPORTANT: Use /dev/disk/by-id/ paths for stable device identification!
+# Run 'ls -l /dev/disk/by-id/' to find your disk IDs
+
+# Safety flag - LVM operations will ONLY run if this is set to true
+# This prevents accidental data loss
+lvm_enable: false
+
+# Fast pool configuration (RAID 1 with 6x OCZ 139.7G drives)
+lvm_fast_pool_devices:
+  - /dev/disk/by-id/ata-OCZ-VELO_DRIVE_OCZ-7LZ6F9S4RGG17561
+  - /dev/disk/by-id/ata-OCZ-VELO_DRIVE_OCZ-59BY52U062ID89M9
+  - /dev/disk/by-id/ata-OCZ-VELO_DRIVE_OCZ-41IL9132PN9EY7HD
+  - /dev/disk/by-id/ata-OCZ-VELO_DRIVE_OCZ-N32Q91YED80409T5
+  - /dev/disk/by-id/ata-OCZ-VELO_DRIVE_OCZ-S117WS0340T125L4
+  - /dev/disk/by-id/ata-OCZ-VELO_DRIVE_OCZ-1746Q85H212J9C5W
+
+lvm_fast_pool_vg_name: "fast-pool"
+lvm_fast_pool_lv_name: "fast-pool-lv"
+lvm_fast_pool_mount_point: "/var/lib/vms/fast-pool"
+lvm_fast_pool_filesystem: "ext4"
+lvm_fast_pool_raid_level: "5"  # RAID 1 (6 disks = ~419.1G usable with mirroring)
+lvm_fast_pool_lv_size: "100%FREE"  # Use all available space
+
+# Slow pool configuration (single 1.8TB WD disk)
+lvm_slow_pool_devices:
+  - /dev/disk/by-id/ata-WDC_WD20EZRX-00DC0B0_WD-WMC1T0207359
+
+lvm_slow_pool_vg_name: "slow-pool"
+lvm_slow_pool_lv_name: "slow-pool-lv"
+lvm_slow_pool_mount_point: "/var/lib/vms/slow-pool"
+lvm_slow_pool_filesystem: "ext4"
+lvm_slow_pool_lv_size: "100%FREE"  # Use all available space
+
+# Mid pool directory (no LVM, just a directory)
+lvm_mid_pool_directory: "/var/lib/vms/mid-pool"
+
+# Filesystem mount options
+lvm_mount_options: "defaults,noatime,nofail,x-systemd.device-timeout=9"
+
+# Whether to wipe existing signatures on devices
+lvm_wipe_signatures: yes
+
+# Force recreation of LVM setup (WARNING: Will destroy existing data!)
+# When set to true, will stop arrays, remove VGs, and perform thorough wipe
+lvm_force_recreate: false
+

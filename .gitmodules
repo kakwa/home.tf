@@ -1,0 +1,3 @@
+[submodule "ansible/external/ansible"]
+	path = ansible/external/ansible
+	url = git@github.com:kakwa/ansible.git

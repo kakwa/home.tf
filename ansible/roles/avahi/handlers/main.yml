@@ -1,0 +1,15 @@
+---
+# Handlers for avahi operations
+
+- name: restart avahi-daemon
+  systemd:
+    name: avahi-daemon
+    state: restarted
+
+- name: reload avahi-daemon
+  systemd:
+    name: avahi-daemon
+    state: reloaded
+
+
+

@@ -1,0 +1,6 @@
+---
+# Packages for Talos-related tooling (imaging, IaC, talosctl)
+talos_tools_packages:
+  - genisoimage
+  - tofu
+  - talosctl

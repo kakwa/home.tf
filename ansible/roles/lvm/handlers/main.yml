@@ -1,0 +1,11 @@
+---
+# Handlers for LVM operations
+
+- name: reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: update mdadm
+  command: update-initramfs -u
+  when: ansible_os_family == "Debian"
+

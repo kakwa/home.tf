@@ -1,0 +1,69 @@
+---
+- name: Check if GRUB config exists
+  stat:
+    path: /etc/default/grub
+  register: grub_config
+
+- name: Configure GRUB for serial console
+  block:
+    - name: Backup GRUB configuration
+      copy:
+        src: /etc/default/grub
+        dest: /etc/default/grub.backup
+        remote_src: yes
+        mode: '0644'
+        force: no
+
+    - name: Enable serial console in GRUB
+      lineinfile:
+        path: /etc/default/grub
+        regexp: '^#?GRUB_TERMINAL='
+        line: 'GRUB_TERMINAL="console serial"'
+        state: present
+      notify: update grub
+      when: grub_serial_enable | bool
+
+    - name: Configure GRUB serial command
+      lineinfile:
+        path: /etc/default/grub
+        regexp: '^#?GRUB_SERIAL_COMMAND='
+        line: 'GRUB_SERIAL_COMMAND="serial --unit={{ grub_serial_unit }} --speed={{ grub_serial_speed }} --word={{ grub_serial_word }} --parity={{ grub_serial_parity }} --stop={{ grub_serial_stop }}"'
+        state: present
+      notify: update grub
+      when: grub_serial_enable | bool
+
+    - name: Add console parameters to GRUB_CMDLINE_LINUX
+      lineinfile:
+        path: /etc/default/grub
+        regexp: '^GRUB_CMDLINE_LINUX='
+        line: 'GRUB_CMDLINE_LINUX="{{ console_kernel_params }}"'
+        state: present
+      notify: update grub
+
+    - name: Set GRUB timeout
+      lineinfile:
+        path: /etc/default/grub
+        regexp: '^#?GRUB_TIMEOUT='
+        line: 'GRUB_TIMEOUT={{ grub_timeout }}'
+        state: present
+      notify: update grub
+
+  when: grub_config.stat.exists
+
+- name: Enable and start getty on serial console
+  systemd:
+    name: "serial-getty@{{ serial_console_port }}.service"
+    enabled: yes
+    state: started
+  when: getty_serial_enable | bool
+
+- name: Check if serial port device exists
+  stat:
+    path: "/dev/{{ serial_console_port }}"
+  register: serial_port
+  failed_when: false
+
+- name: Display serial port status
+  debug:
+    msg: "Serial port /dev/{{ serial_console_port }} {{ 'exists' if serial_port.stat.exists else 'does not exist (may be available after reboot)' }}"
+
