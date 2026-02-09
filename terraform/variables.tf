@@ -97,7 +97,7 @@ variable "debian_admin_user" {
 variable "debian_authorized_keys" {
   description = "SSH public keys for debian_admin_user (authorized_keys)"
   type        = list(string)
-  default     = [
+  default = [
     "ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAzODQAAAAIbmlzdHAzODQAAABhBIefJ3PQVyfXunlkWc6Ukdw8EZNw8sLX1Pda0p+PckY/maze5K298CiSuE+5LR/9RM5lwx8N8NqnuKTUUSHsfs58jI03RNAuFHaT4Sc6PKS7SfG9t3ZDkCVSdn5Csopwgg== kakwa@tsingtao"
   ]
 }

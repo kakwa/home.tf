@@ -84,9 +84,10 @@ ${join("\n", [for k in var.debian_authorized_keys : "          - ${replace(k, "\
 }
 
 resource "libvirt_domain" "utility" {
-  name   = "utility"
-  memory = local.utility_vm.memory_mb
-  vcpu   = local.utility_vm.vcpu
+  name      = "utility"
+  autostart = true
+  memory    = local.utility_vm.memory_mb
+  vcpu      = local.utility_vm.vcpu
 
   cpu {
     mode = "host-passthrough"
@@ -105,7 +106,7 @@ resource "libvirt_domain" "utility" {
 
   # First NIC: bridge-network (eth0)
   network_interface {
-    network_id     = libvirt_network.bridge_network.id
+    network_id = libvirt_network.bridge_network.id
   }
 
   # Second NIC: talos network (eth1)

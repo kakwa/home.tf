@@ -57,9 +57,10 @@ resource "libvirt_cloudinit_disk" "worker_seed" {
 resource "libvirt_domain" "workers" {
   for_each = local.worker_nodes
 
-  name   = each.key
-  memory = each.value.memory_mb
-  vcpu   = each.value.vcpu
+  name      = each.key
+  autostart = true
+  memory    = each.value.memory_mb
+  vcpu      = each.value.vcpu
 
   cpu {
     mode = "host-passthrough"
