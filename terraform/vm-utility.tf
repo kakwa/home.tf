@@ -73,7 +73,7 @@ ${join("\n", [for k in var.debian_authorized_keys : "          - ${replace(k, "\
     ethernets:
       ens3:
         addresses:
-          - 192.168.1.13/24
+          - ${var.utility_static_ip}
         gateway4: 192.168.1.254
         nameservers:
           addresses:

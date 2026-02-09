@@ -73,6 +73,21 @@ variable "bridge_manage_netplan" {
   default     = true
 }
 
+variable "gateway_static_ips" {
+  description = "Static IPs for gateway VMs on bridge-network (CIDR, e.g. 192.168.1.11/24)"
+  type        = map(string)
+  default = {
+    "gateway-1" = "192.168.1.11/24"
+    "gateway-2" = "192.168.1.12/24"
+  }
+}
+
+variable "utility_static_ip" {
+  description = "Static IP for utility VM on bridge-network (CIDR, e.g. 192.168.1.13/24)"
+  type        = string
+  default     = "192.168.1.13/24"
+}
+
 variable "debian_admin_user" {
   description = "Admin username for Debian VMs (gateway, utility); created via cloud-init with sudo"
   type        = string
