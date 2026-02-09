@@ -25,10 +25,6 @@ locals {
     "gateway-2" = { memory_mb = 1024, vcpu = 2 }
   }
   gateway_disk_size = 50 * 1024 * 1024 * 1024 # 50GB
-  gateway_static_ips = {
-    "gateway-1" = "192.168.1.11/24"
-    "gateway-2" = "192.168.1.12/24"
-  }
 }
 
 resource "libvirt_volume" "gateway_disk" {
@@ -69,6 +65,7 @@ ${join("\n", [for k in var.debian_authorized_keys : "          - ${replace(k, "\
 
     runcmd:
       - systemctl enable --now qemu-guest-agent
+      - systemctl restart ssh
 
     timezone: UTC
   EOF
@@ -83,7 +80,7 @@ ${join("\n", [for k in var.debian_authorized_keys : "          - ${replace(k, "\
     ethernets:
       ens3:
         addresses:
-          - ${local.gateway_static_ips[each.key]}
+          - ${var.gateway_static_ips[each.key]}
         gateway4: 192.168.1.254
         nameservers:
           addresses:
