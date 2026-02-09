@@ -27,29 +27,26 @@
     update_cache: yes
     cache_valid_time: 3600
 
-# Create physical bridge for bridge-network
-- name: Create physical bridge for external connectivity
-  block:
-    - name: Check if bridge interface exists
-      shell: ip link show virbr-enp6s0 2>/dev/null || echo "not_found"
-      register: bridge_check
-      changed_when: false
-      failed_when: false
+# Configure physical bridge for bridge-network in /etc/network/interfaces
+- name: Ensure bridge stanza in /etc/network/interfaces
+  blockinfile:
+    path: /etc/network/interfaces
+    block: |
+      # Bridge interface - no IP
+      auto {{ libvirt_bridge_name }}
+      iface {{ libvirt_bridge_name }} inet manual
+          bridge_ports {{ libvirt_bridge_physical_interface }}
+          bridge_stp off
+          bridge_fd 0
+          bridge_maxwait 0
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - libvirt bridge {{ libvirt_bridge_name }}"
+    create: yes
+  register: interfaces_bridge_block
 
-    - name: Create bridge using netctl/nmcli (if bridge doesn't exist)
-      shell: |
-        # Check if interface is already part of a bridge
-        if ! ip link show virbr-enp6s0 >/dev/null 2>&1; then
-          # Create the bridge with brctl
-          brctl addbr virbr-enp6s0 2>/dev/null || true
-          ip link set virbr-enp6s0 up
-          echo "CREATED"
-        else
-          echo "EXISTS"
-        fi
-      register: bridge_create
-      changed_when: "'CREATED' in bridge_create.stdout"
-      failed_when: false
+- name: Bring up bridge interface
+  command: ifup -f {{ libvirt_bridge_name }}
+  when: interfaces_bridge_block.changed
+  changed_when: true
 
 # Enable nested virtualization (Intel)
 - name: Check if nested virtualization is enabled (Intel)
