@@ -25,12 +25,16 @@ libvirt_users: []  # Add users to libvirt and libvirt-qemu groups
 libvirt_default_network_autostart: true
 libvirt_default_network_state: active
 
+# Bridge for external connectivity (configured in /etc/network/interfaces)
+libvirt_bridge_name: br0
+libvirt_bridge_physical_interface: enp6s0
+
 # Additional networks
 libvirt_networks:
   - name: bridge-network
     type: bridge
-    bridge_name: virbr-enp6s0
-    interface: enp6s0
+    bridge_name: "{{ libvirt_bridge_name }}"
+    interface: "{{ libvirt_bridge_physical_interface }}"
     autostart: true
     state: active
   - name: internal-network
