@@ -3,26 +3,27 @@
 # fallback to virsh domifaddr (external script) then static (gateways + utility only).
 
 # Provider-based IP discovery (same source as virsh domifaddr --source agent when source = "agent").
+# Use domain name (not id): libvirt looks up by UUID or name; provider .id can be numeric domain id.
 data "libvirt_domain_interface_addresses" "gateway" {
   for_each = local.gateway_vms
-  domain   = libvirt_domain.gateway[each.key].id
+  domain   = libvirt_domain.gateway[each.key].name
   source   = "any"
 }
 
 data "libvirt_domain_interface_addresses" "utility" {
-  domain = libvirt_domain.utility.id
+  domain = libvirt_domain.utility.name
   source = "any"
 }
 
 data "libvirt_domain_interface_addresses" "control_plane" {
   for_each = local.control_plane_nodes
-  domain   = libvirt_domain.control_plane[each.key].id
+  domain   = libvirt_domain.control_plane[each.key].name
   source   = "any"
 }
 
 data "libvirt_domain_interface_addresses" "workers" {
   for_each = local.worker_nodes
-  domain   = libvirt_domain.workers[each.key].id
+  domain   = libvirt_domain.workers[each.key].name
   source   = "any"
 }
 
