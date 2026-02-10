@@ -1,7 +1,9 @@
 # Create NAT network for VMs (libvirt 0.9 schema: forward + ips)
+# Note: ansible/nets shows working libvirt XML uses <ip family="ipv4" address="..." prefix="24">;
+# the "not working" variant uses <ip address="..." netmask="255.255.255.0">. If NAT/DHCP fails,
+# try ensuring the provider emits prefix (e.g. use prefix = local.network_prefix in ips if supported).
 locals {
   network_prefix = tonumber(split("/", var.network_cidr)[1])
-  # IPv4 netmask from prefix (libvirt uses netmask in XML, e.g. 255.255.255.0)
   network_netmask = lookup(
     {
       "8"  = "255.0.0.0"
