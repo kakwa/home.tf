@@ -147,14 +147,11 @@ resource "libvirt_domain" "utility" {
       ] : []
     )
     interfaces = [
+      # Use direct bridge (not libvirt network) to avoid provider bug: source.network read back as null after apply
       {
-        type  = "network"
+        type  = "bridge"
         model = { type = "virtio" }
-        source = {
-          network = {
-            network = libvirt_network.bridge_network.name
-          }
-        }
+        source = { bridge = { bridge = var.bridge_name } }
       },
       {
         type  = "network"
