@@ -52,7 +52,7 @@ resource "libvirt_cloudinit_disk" "cp_seed" {
   network_config = <<-EOF
     version: 2
     ethernets:
-      enp1s0:
+      eth0:
         dhcp4: true
   EOF
 }
