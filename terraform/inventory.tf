@@ -18,11 +18,11 @@ locals {
   utility_ip = coalesce(lookup(local.discovered_ips, "utility", ""), replace(var.utility_static_ip, "/24", ""))
   talos_cp_ips = {
     for k in keys(local.control_plane_nodes) :
-    k => lookup(local.discovered_ips, k, "")
+    k => coalesce(lookup(local.discovered_ips, k, ""), replace(lookup(var.talos_control_plane_static_ips, k, ""), "/24", ""))
   }
   talos_worker_ips = {
     for k in keys(local.worker_nodes) :
-    k => lookup(local.discovered_ips, k, "")
+    k => coalesce(lookup(local.discovered_ips, k, ""), replace(lookup(var.talos_worker_static_ips, k, ""), "/24", ""))
   }
   # Ordered lists for env file (cp-1, cp-2, cp-3 and worker-1..worker-6)
   control_plane_ips_list = [for k in sort(keys(local.control_plane_nodes)) : lookup(local.talos_cp_ips, k, "")]
