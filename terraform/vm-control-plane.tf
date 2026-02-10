@@ -138,7 +138,7 @@ resource "libvirt_domain" "control_plane" {
       }
     ]
     videos = [
-      { model = { type = "virtio" } }
+      { model = { type = "virtio", heads = 1, primary = "yes" } }
     ]
     graphics = [
       {

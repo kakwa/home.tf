@@ -183,7 +183,7 @@ resource "libvirt_domain" "gateway" {
       }
     ]
     videos = [
-      { model = { type = "virtio" } }
+      { model = { type = "virtio", heads = 1, primary = "yes" } }
     ]
     graphics = [
       {
