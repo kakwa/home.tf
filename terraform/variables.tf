@@ -94,29 +94,6 @@ variable "utility_static_ip" {
   default     = "192.168.1.13/24"
 }
 
-variable "talos_control_plane_static_ips" {
-  description = "Static IPs for Talos control plane nodes (CIDR); fallback when virsh domifaddr has no IP"
-  type        = map(string)
-  default = {
-    "talos-cp-1" = "192.168.1.20/24"
-    "talos-cp-2" = "192.168.1.21/24"
-    "talos-cp-3" = "192.168.1.22/24"
-  }
-}
-
-variable "talos_worker_static_ips" {
-  description = "Static IPs for Talos worker nodes (CIDR); fallback when virsh domifaddr has no IP"
-  type        = map(string)
-  default = {
-    "talos-worker-1" = "192.168.1.30/24"
-    "talos-worker-2" = "192.168.1.31/24"
-    "talos-worker-3" = "192.168.1.32/24"
-    "talos-worker-4" = "192.168.1.33/24"
-    "talos-worker-5" = "192.168.1.34/24"
-    "talos-worker-6" = "192.168.1.35/24"
-  }
-}
-
 variable "debian_admin_user" {
   description = "Admin username for Debian VMs (gateway, utility); created via cloud-init with sudo"
   type        = string
