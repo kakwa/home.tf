@@ -81,7 +81,7 @@ ${join("\n", [for k in var.debian_authorized_keys : "          - ${replace(k, "\
         gateway4: 192.168.1.254
         nameservers:
           addresses:
-            - 192.168.1.254
+            - 8.8.8.8
       enp2s0:
         dhcp4: true
   EOF

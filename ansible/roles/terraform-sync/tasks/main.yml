@@ -12,7 +12,14 @@
     src: "{{ terraform_sync_src }}/"
     dest: "{{ terraform_sync_dest }}"
     delete: yes
-    rsync_opts: "{{ ['--omit-dir-times'] + (terraform_sync_excludes | map('regex_replace', '^', '--exclude=') | list) }}"
+    rsync_opts:
+      - --omit-dir-times
+      - --exclude=*.tfstate
+      - --exclude=*.tfstate.*
+      - --exclude=ovh.json
+      - --exclude=talos-env.sh
+      - --exclude=inventory.yml
+      - --exclude=ovh.auto.tfvars.json
 
 - name: Ensure root .bashrc exists before adding cdtf alias
   file:

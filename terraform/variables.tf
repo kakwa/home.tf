@@ -25,7 +25,7 @@ variable "cloudinit_storage_pool_name" {
 variable "talos_version" {
   description = "Talos version to use"
   type        = string
-  default     = "v1.12.2"
+  default     = "v1.12.3"
 }
 
 variable "talos_extensions" {
@@ -118,4 +118,45 @@ variable "vm_spice_port_base" {
   description = "Base port for SPICE (each VM gets a unique port: control-plane 5900+, workers 5910+, gateway 5920+, utility 5930)"
   type        = number
   default     = 5900
+}
+
+# OVH credentials. For automatic loading, name the file ovh.auto.tfvars.json (same format; *.auto.tfvars.json is loaded by default).
+# Format: {"application_key":"","application_secret":"","consumer_key":"","ovh_endpoint":"ovh-eu"} (ovh_endpoint optional)
+variable "application_key" {
+  description = "OVH API application key"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "application_secret" {
+  description = "OVH API application secret"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "consumer_key" {
+  description = "OVH API consumer key"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "ovh_endpoint" {
+  description = "OVH API endpoint (ovh-eu, ovh-ca, ovh-us)"
+  type        = string
+  default     = "ovh-eu"
+}
+
+variable "ovh_zone" {
+  description = "OVH DNS zone for cluster public names (e.g. kakwalab.ovh)"
+  type        = string
+  default     = "kakwalab.ovh"
+}
+
+variable "ovh_int_subdomain" {
+  description = "Subdomain under zone for cluster hosts (e.g. int -> gateway-1.int.kakwalab.ovh)"
+  type        = string
+  default     = "int"
 }
