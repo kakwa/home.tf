@@ -6,9 +6,3 @@ terraform_sync_dest: /opt/home.tf/terraform
 
 # Path to terraform directory on the controller (set by playbook, e.g. "{{ playbook_dir }}/../terraform")
 # terraform_sync_src is required and should be passed when including the role
-
-# Exclude patterns for synchronize (don't sync provider plugins or local state)
-terraform_sync_excludes:
-  - .terraform/
-  - "*.tfstate"
-  - "*.tfstate.*"

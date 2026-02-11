@@ -14,6 +14,22 @@ tofu plan
 tofu apply
 ```
 
+## OVH DNS (optional)
+
+To manage DNS records under `int.kakwalab.ovh`, add `ovh.json` in this directory with your OVH API credentials:
+
+```json
+{"application_key":"","application_secret":"","consumer_key":"","ovh_endpoint":"ovh-eu"}
+```
+
+**Load by default:** create a symlink so OpenTofu auto-loads the file (no `-var-file` needed):
+
+```bash
+ln -sf ovh.json ovh.auto.tfvars.json
+```
+
+Then `tofu apply` will use the credentials automatically. Otherwise run `tofu apply -var-file=ovh.json`.
+
 # Troubleshooting
 
 ## "Storage volume not found" / `path;uuid` volume key
