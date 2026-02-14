@@ -1,7 +1,7 @@
 locals {
   control_plane_nodes = {
     for i in range(3) : "talos-cp-${i + 1}" => {
-      memory_mb = 1024
+      memory_mb = 2048
       vcpu      = 2
     }
   }
