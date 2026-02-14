@@ -35,7 +35,7 @@ resource "libvirt_network" "talos_network" {
     netmask  = local.network_netmask
     dhcp = {
       ranges = [{
-        start = cidrhost(var.network_cidr, 2)
+        start = cidrhost(var.network_cidr, 50)
         end   = cidrhost(var.network_cidr, 254)
       }]
     }

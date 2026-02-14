@@ -94,6 +94,12 @@ variable "utility_static_ip" {
   default     = "192.168.1.13/24"
 }
 
+variable "control_plane_vip" {
+  description = "Virtual IP for the Talos/Kubernetes control plane API (e.g. 192.168.100.10); used in talos-env.sh and OVH DNS talos-k8s record"
+  type        = string
+  default     = "192.168.100.10"
+}
+
 variable "debian_admin_user" {
   description = "Admin username for Debian VMs (gateway, utility); created via cloud-init with sudo"
   type        = string
