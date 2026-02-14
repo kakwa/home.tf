@@ -100,6 +100,7 @@ resource "local_file" "env" {
   content = templatefile("${path.module}/env.tpl", {
     control_plane_ips = local.control_plane_ips_list
     worker_ips        = local.worker_ips_list
+    control_plane_vip = var.control_plane_vip
   })
   filename        = "${path.module}/talos-env.sh"
   file_permission = "0644"

@@ -27,6 +27,14 @@ resource "ovh_domain_zone_record" "cluster" {
   ttl       = 300
 }
 
+resource "ovh_domain_zone_record" "talos_k8s" {
+  zone      = var.ovh_zone
+  subdomain = "talos-k8s.${var.ovh_int_subdomain}"
+  fieldtype = "A"
+  target    = var.control_plane_vip
+  ttl       = 300
+}
+
 output "ovh_cluster_fqdns" {
   description = "Public DNS names for cluster hosts under int.<zone>"
   value = {
