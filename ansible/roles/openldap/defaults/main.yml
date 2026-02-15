@@ -12,6 +12,11 @@ openldap_fqdn: "utility.{{ openldap_domain }}"
 # Admin password for cn=admin,<base_dn> (override with vault in production)
 openldap_admin_password: "changeme"
 
+# Read-only technical account for ssh_ldap (NSS/PAM/AuthorizedKeysCommand). Override password with vault.
+openldap_ssh_ldap_readonly_uid: "ssh-ldap-readonly"
+openldap_ssh_ldap_readonly_dn: "uid={{ openldap_ssh_ldap_readonly_uid }},ou=services,{{ openldap_base_dn }}"
+openldap_ssh_ldap_readonly_password: "changeme-readonly"
+
 # Paths for TLS (self-signed)
 openldap_ssl_dir: "/etc/ldap/ssl"
 openldap_ca_cert: "{{ openldap_ssl_dir }}/ca.crt"

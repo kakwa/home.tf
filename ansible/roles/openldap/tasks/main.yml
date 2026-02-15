@@ -179,15 +179,18 @@
   changed_when: openldap_memberof_user_add.rc == 0
   become: true
 
-- name: Get MDB database DN from cn=config
+# cn=config is only reachable via ldapi EXTERNAL; LDAPS with cn=admin cannot query it (No such object).
+# When ldapi fails with "Confidentiality required" (rc 13) after TLS is applied, use default MDB DN.
+- name: Get MDB database DN from cn=config (ldapi)
   command: ldapsearch -Y EXTERNAL -H ldapi:/// -b cn=config -LLL "(olcDatabase=*mdb*)" dn
   register: openldap_mdb_search
   become: true
   changed_when: false
+  failed_when: openldap_mdb_search.rc != 0 and openldap_mdb_search.rc != 13
 
 - name: Set OpenLDAP MDB database DN for overlay
   set_fact:
-    openldap_mdb_dn: "{{ (openldap_mdb_search.stdout | regex_findall('dn:\\s*(.+)') | first) | default('olcDatabase={1}mdb,cn=config') }}"
+    openldap_mdb_dn: "{{ ((openldap_mdb_search.stdout | regex_findall('dn:\\s*(.+)')) + ['olcDatabase={1}mdb,cn=config'])[0] if openldap_mdb_search.rc == 0 else 'olcDatabase={1}mdb,cn=config' }}"
 
 - name: Create memberof overlay LDIF
   copy:
@@ -211,6 +214,52 @@
   failed_when: false
   changed_when: openldap_memberof_overlay_add.rc == 0
   become: true
+
+# PPolicy overlay: recognizes password-policy control 1.3.6.1.4.1.42.2.27.8.5.1 sent by nslcd,
+# so slapd stops logging "unrecognized control" and PAM/LDAP bind works without noise.
+- name: Create ppolicy overlay LDIF
+  copy:
+    content: |
+      dn: olcOverlay=ppolicy,{{ openldap_mdb_dn }}
+      objectClass: olcOverlayConfig
+      objectClass: olcPPolicyConfig
+      olcOverlay: ppolicy
+    dest: "{{ openldap_ldif_dir }}/ppolicy-overlay.ldif"
+    mode: "0600"
+  become: true
+
+- name: Add ppolicy overlay to MDB database
+  command: ldapadd -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/ppolicy-overlay.ldif
+  register: openldap_ppolicy_overlay_add
+  failed_when: false
+  changed_when: openldap_ppolicy_overlay_add.rc == 0
+  become: true
+
+# ACL for ssh_ldap read-only account (must run via ldapi before TLS, else "Confidentiality required")
+- name: Check if ACL for ssh_ldap read-only account already exists
+  command: ldapsearch -Y EXTERNAL -H ldapi:/// -b "{{ openldap_mdb_dn }}" -LLL olcAccess
+  register: openldap_acl_search
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Create LDIF to add olcAccess for ssh_ldap read-only account
+  copy:
+    content: |
+      dn: {{ openldap_mdb_dn }}
+      changetype: modify
+      add: olcAccess
+      olcAccess: to dn.subtree="{{ openldap_base_dn }}" by dn.exact="{{ openldap_ssh_ldap_readonly_dn }}" read
+    dest: "{{ openldap_ldif_dir }}/acl-ssh-ldap-readonly.ldif"
+    mode: "0600"
+  become: true
+
+- name: Add ACL for ssh_ldap read-only account to MDB database (via ldapi)
+  command: ldapmodify -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/acl-ssh-ldap-readonly.ldif
+  register: openldap_acl_add_ldapi
+  become: true
+  when: openldap_ssh_ldap_readonly_dn not in (openldap_acl_search.stdout | default(''))
+  failed_when: openldap_acl_add_ldapi.rc is defined and openldap_acl_add_ldapi.rc != 0 and openldap_acl_add_ldapi.rc != 13
 
 - name: Apply TLS configuration to slapd (ldapi EXTERNAL)
   command: ldapmodify -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/openldap-tls.ldif
@@ -261,6 +310,7 @@
   loop:
     - { ou: "people" }
     - { ou: "groups" }
+    - { ou: "services" }
   when: item.ou not in (openldap_existing_ous.results | default([]) | map(attribute='ou') | flatten | list)
   ignore_errors: true
   register: openldap_ou_result
@@ -306,6 +356,32 @@
   ignore_errors: true
   register: openldap_role_groups_result
 
+# Read-only technical account for ssh_ldap (NSS/PAM/AuthorizedKeysCommand)
+- name: Hash password for ssh_ldap read-only technical account
+  command: slappasswd -s "{{ openldap_ssh_ldap_readonly_password }}"
+  register: openldap_ssh_ldap_readonly_password_hash
+  changed_when: false
+  become: true
+
+- name: Create ssh_ldap read-only technical account in ou=services
+  community.general.ldap_entry:
+    dn: "{{ openldap_ssh_ldap_readonly_dn }}"
+    objectClass:
+      - inetOrgPerson
+      - organizationalPerson
+      - person
+      - top
+    attributes:
+      uid: "{{ openldap_ssh_ldap_readonly_uid }}"
+      cn: "{{ openldap_ssh_ldap_readonly_uid }}"
+      sn: "{{ openldap_ssh_ldap_readonly_uid }}"
+      userPassword: "{{ openldap_ssh_ldap_readonly_password_hash.stdout }}"
+    state: present
+    server_uri: "ldaps://127.0.0.1:636/"
+    bind_dn: "cn=admin,{{ openldap_base_dn }}"
+    bind_pw: "{{ openldap_admin_password }}"
+    validate_certs: false
+
 # Optional: create default user (carpenti) in ou=people and add to cn=users + cn=admins (only if user does not exist)
 - name: Check if default user (carpenti) exists in LDAP
   community.general.ldap_search:
@@ -334,6 +410,7 @@
       - organizationalPerson
       - inetOrgPerson
       - posixAccount
+      - userWithMemberOf
     attributes:
       uid: "{{ openldap_default_user_uid }}"
       cn: "{{ openldap_default_user_cn }}"
@@ -444,3 +521,54 @@
     openldap_default_user_create | default(false) | bool
     and ((openldap_default_user_search.results | default([]) | length > 0)
          or (openldap_default_user_created is defined and openldap_default_user_created is changed))
+
+# memberOf overlay only writes memberOf when the user entry has an objectClass that allows it (userWithMemberOf).
+- name: Create LDIF to add userWithMemberOf to existing default user
+  copy:
+    content: |
+      dn: uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}
+      changetype: modify
+      add: objectClass
+      objectClass: userWithMemberOf
+    dest: "{{ openldap_ldif_dir }}/memberof-add-oc.ldif"
+    mode: "0600"
+  when: openldap_default_user_create | default(false) | bool and (openldap_default_user_search.results | default([]) | length > 0)
+
+- name: Ensure default user has userWithMemberOf for memberOf overlay
+  command: >
+    ldapmodify -H ldaps://127.0.0.1:636/ -x
+    -D "cn=admin,{{ openldap_base_dn }}" -w "{{ openldap_admin_password }}"
+    -f "{{ openldap_ldif_dir }}/memberof-add-oc.ldif"
+  environment:
+    LDAPTLS_REQCERT: "never"
+  become: true
+  register: openldap_memberof_oc_add
+  failed_when: false
+  changed_when: openldap_memberof_oc_add.rc == 0
+  when: openldap_default_user_create | default(false) | bool and (openldap_default_user_search.results | default([]) | length > 0)
+
+# Touch each group (replace cn with same value) so memberOf overlay updates memberOf on user entries.
+- name: Create LDIFs to touch groups (trigger memberOf overlay)
+  copy:
+    content: |
+      dn: cn={{ item }},ou=groups,{{ openldap_base_dn }}
+      changetype: modify
+      replace: cn
+      cn: {{ item }}
+    dest: "{{ openldap_ldif_dir }}/memberof-touch-{{ item }}.ldif"
+    mode: "0600"
+  loop: "{{ ['users', 'admins'] + openldap_role_groups }}"
+  become: true
+
+- name: Touch groups to refresh memberOf on user entries
+  command: >
+    ldapmodify -H ldaps://127.0.0.1:636/ -x
+    -D "cn=admin,{{ openldap_base_dn }}" -w "{{ openldap_admin_password }}"
+    -f "{{ openldap_ldif_dir }}/memberof-touch-{{ item }}.ldif"
+  environment:
+    LDAPTLS_REQCERT: "never"
+  become: true
+  loop: "{{ ['users', 'admins'] + openldap_role_groups }}"
+  register: openldap_memberof_touch
+  failed_when: false
+  changed_when: openldap_memberof_touch.rc == 0

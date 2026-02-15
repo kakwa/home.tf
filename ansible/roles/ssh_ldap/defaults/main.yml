@@ -2,11 +2,11 @@
 # SSH + LDAP authentication: NSS/PAM and SSH keys from LDAP (openldap/openssh-lpk)
 # Use after openldap role on the same host, or set ldap_uri to the LDAP server FQDN.
 
-# LDAP connection (default: same as openldap role)
+# LDAP connection (default: same as openldap role). Uses read-only technical account from openldap role.
 ssh_ldap_uri: "ldaps://{{ openldap_fqdn | default('localhost') }}:636"
 ssh_ldap_base_dn: "{{ openldap_base_dn }}"
-ssh_ldap_bind_dn: "cn=admin,{{ ssh_ldap_base_dn }}"
-ssh_ldap_bind_password: "{{ openldap_admin_password }}"
+ssh_ldap_bind_dn: "{{ openldap_ssh_ldap_readonly_dn }}"
+ssh_ldap_bind_password: "{{ openldap_ssh_ldap_readonly_password }}"
 
 # TLS: path to CA cert for server verification (use allow for self-signed)
 ssh_ldap_tls_cacert: "{{ openldap_ca_cert | default('/etc/ldap/ssl/ca.crt') }}"
@@ -37,11 +37,16 @@ ssh_ldap_authorized_keys_pwfile: "/etc/ssh/ldap-keys.pw"
 ssh_ldap_create_homedir: true
 ssh_ldap_homedir_umask: "0022"
 
+# PAM account: users who can log in via SSH without LDAP/group check (e.g. local fallback)
+ssh_ldap_pam_account_whitelist_users:
+  - kakwa
+
 # SSH: only allow users in these LDAP groups (enforced via sshd AllowGroups + PAM pam_succeed_if ingroup)
 # Groups are resolved via NSS/LDAP (posixGroup). Empty list = no group restriction.
 ssh_ldap_allowed_ssh_groups:
   - ssh-admins
   - ssh-users
+  - sudo
 
 # Sudo: grant sudo to members of cn=ssh-admins (via /etc/sudoers.d/99-ssh-admins)
 ssh_ldap_sudoers_ssh_admins: true

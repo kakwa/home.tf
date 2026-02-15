@@ -1,8 +1,9 @@
 ---
+
 - name: Install NSS/PAM LDAP and SSH packages
-  apt:
+  ansible.builtin.apt:
     name:
-      - nss-pam-ldapd
+      - nslcd
       - libpam-ldapd
       - openssh-server
       - libpam-mkhomedir
@@ -50,6 +51,9 @@
     marker: "# {mark} ANSIBLE MANAGED BLOCK - ssh_ldap account + allowed groups"
     block: |
       account sufficient    pam_succeed_if.so user = root
+      {% for u in ssh_ldap_pam_account_whitelist_users | default([]) %}
+      account sufficient    pam_succeed_if.so user = {{ u }}
+      {% endfor %}
       account required     pam_ldap.so
       account sufficient   pam_succeed_if.so user ingroup {{ ssh_ldap_allowed_ssh_groups | join(':') }}
       account required     pam_deny.so
