@@ -1,0 +1,10 @@
+---
+- name: restart nslcd
+  service:
+    name: nslcd
+    state: restarted
+
+- name: restart ssh
+  service:
+    name: ssh
+    state: restarted
