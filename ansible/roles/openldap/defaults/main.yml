@@ -24,6 +24,24 @@ openldap_services: "ldap:/// ldaps:/// ldapi:///"
 # Permanent directory for LDIF files (TLS config, schema, etc.)
 openldap_ldif_dir: "/etc/ldap/ldifs"
 
+# Groups for ldapcherry roles and SSH/sudo: ssh-admins, k8s-admins, ssh-users, k8s-users
+openldap_role_groups:
+  - ssh-admins
+  - k8s-admins
+  - ssh-users
+  - k8s-users
+
+# GID numbers for groups (posixGroup + groupWithMember auxiliary). Used for NSS and consistency.
+# Default groups (ldapcherry)
+openldap_group_gids:
+  users: 10001
+  admins: 10002
+# Role groups (ldapcherry + SSH/sudo) - must match openldap_role_groups
+  ssh-admins: 10010
+  k8s-admins: 10011
+  ssh-users: 10012
+  k8s-users: 10013
+
 # Optional default user in ou=people, member of cn=users and cn=admins (created only if missing)
 openldap_default_user_create: true
 openldap_default_user_uid: "carpenti"

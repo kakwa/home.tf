@@ -1,5 +1,5 @@
-# LdapCherry roles - user and admin (groups under {{ ldapcherry_groupdn }})
-# Managed by Ansible. Ensure cn=users and cn=admins exist in LDAP.
+# LdapCherry roles - user, admin, ssh/k8s (groups under {{ ldapcherry_groupdn }})
+# Managed by Ansible. Ensure groups exist in LDAP (openldap role).
 
 user:
   display_name: User
@@ -15,4 +15,24 @@ admin:
   backends_groups:
     ldap:
       - cn=admins,{{ ldapcherry_groupdn }}
+      - cn=users,{{ ldapcherry_groupdn }}
+
+# SSH: one role, both ssh-admins and ssh-users groups (two by two)
+ssh:
+  display_name: SSH
+  description: SSH access (ssh-admins + ssh-users)
+  backends_groups:
+    ldap:
+      - cn=ssh-admins,{{ ldapcherry_groupdn }}
+      - cn=ssh-users,{{ ldapcherry_groupdn }}
+      - cn=users,{{ ldapcherry_groupdn }}
+
+# K8s: one role, both k8s-admins and k8s-users groups (two by two)
+k8s:
+  display_name: K8s
+  description: Kubernetes (k8s-admins + k8s-users)
+  backends_groups:
+    ldap:
+      - cn=k8s-admins,{{ ldapcherry_groupdn }}
+      - cn=k8s-users,{{ ldapcherry_groupdn }}
       - cn=users,{{ ldapcherry_groupdn }}
