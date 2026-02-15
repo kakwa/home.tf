@@ -19,20 +19,20 @@ admin:
 
 # SSH: one role, both ssh-admins and ssh-users groups (two by two)
 ssh:
-  display_name: SSH
+  display_name: Developpers
   description: SSH access (ssh-admins + ssh-users)
   backends_groups:
     ldap:
+      - cn=k8s-admins,{{ ldapcherry_groupdn }}
       - cn=ssh-admins,{{ ldapcherry_groupdn }}
-      - cn=ssh-users,{{ ldapcherry_groupdn }}
       - cn=users,{{ ldapcherry_groupdn }}
 
 # K8s: one role, both k8s-admins and k8s-users groups (two by two)
 k8s:
-  display_name: K8s
+  display_name: Support
   description: Kubernetes (k8s-admins + k8s-users)
   backends_groups:
     ldap:
-      - cn=k8s-admins,{{ ldapcherry_groupdn }}
+      - cn=ssh-users,{{ ldapcherry_groupdn }}
       - cn=k8s-users,{{ ldapcherry_groupdn }}
       - cn=users,{{ ldapcherry_groupdn }}
