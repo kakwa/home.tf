@@ -121,24 +121,7 @@
     mode: "0600"
   notify: restart slapd
 
-- name: Apply TLS configuration to slapd (ldapi EXTERNAL)
-  command: ldapmodify -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/openldap-tls.ldif
-  register: openldap_tls_apply
-  changed_when: openldap_tls_apply.rc == 0
-  failed_when: false
-
-- name: Add olcLocalSSF via LDAPS (recover when ldapi requires confidentiality)
-  copy:
-    content: |
-      dn: cn=config
-      changetype: modify
-      replace: olcLocalSSF
-      olcLocalSSF: 71
-    dest: "{{ openldap_ldif_dir }}/openldap-localssf.ldif"
-    mode: "0600"
-  when: openldap_tls_apply.rc != 0
-
-- name: Configure SLAPD_SERVICES (ldap + ldaps)
+- name: Configure SLAPD_SERVICES (ldap + ldaps + ldapi)
   lineinfile:
     path: /etc/default/slapd
     regexp: "^#?SLAPD_SERVICES=.*"
@@ -152,9 +135,11 @@
     state: started
     enabled: true
 
-- name: Flush handlers so slapd restarts with ldaps before OU/group creation
+- name: Flush handlers so slapd restarts with ldapi before schema load
   meta: flush_handlers
 
+# Load OpenSSH LPK schema *before* applying TLS config (olcSecurity/olcLocalSSF),
+# otherwise ldapi EXTERNAL fails with "Confidentiality required"
 - name: Load OpenSSH LPK schema (sshPublicKey) into slapd
   copy:
     src: openssh-lpk.ldif
@@ -168,6 +153,27 @@
   failed_when: false
   changed_when: openldap_schema_add.rc == 0
   become: true
+
+- name: Apply TLS configuration to slapd (ldapi EXTERNAL)
+  command: ldapmodify -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/openldap-tls.ldif
+  register: openldap_tls_apply
+  changed_when: openldap_tls_apply.rc == 0
+  failed_when: false
+  become: true
+
+- name: Add olcLocalSSF via LDAPS (recover when ldapi requires confidentiality)
+  copy:
+    content: |
+      dn: cn=config
+      changetype: modify
+      replace: olcLocalSSF
+      olcLocalSSF: 71
+    dest: "{{ openldap_ldif_dir }}/openldap-localssf.ldif"
+    mode: "0600"
+  when: openldap_tls_apply.rc != 0
+
+- name: Flush handlers so slapd restarts with ldaps before OU/group creation
+  meta: flush_handlers
 
 - name: Get existing OUs under base DN
   community.general.ldap_search:
@@ -302,7 +308,8 @@
   when: >
     openldap_default_user_create | default(false) | bool
     and (openldap_default_user_ssh_public_keys | default([]) | length > 0)
-    and (openldap_default_user_search.results | default([]) | length > 0)
+    and ((openldap_default_user_search.results | default([]) | length > 0)
+         or (openldap_default_user_created is defined and openldap_default_user_created is changed))
   register: openldap_default_user_ssh_ldaps
   failed_when: false
   changed_when: openldap_default_user_ssh_ldaps is not failed
