@@ -1,0 +1,24 @@
+# nslcd.conf - NSS/PAM LDAP client (managed by Ansible)
+# Users/groups from {{ ssh_ldap_uri }}, base {{ ssh_ldap_base_dn }}
+
+uid nslcd
+gid nslcd
+
+uri {{ ssh_ldap_uri }}
+base {{ ssh_ldap_base_dn }}
+
+binddn {{ ssh_ldap_bind_dn }}
+bindpw {{ ssh_ldap_bind_password }}
+
+# TLS (self-signed CA or proper CA)
+tls_cacertfile {{ ssh_ldap_tls_cacert }}
+tls_reqcert {{ ssh_ldap_tls_reqcert }}
+
+# Per-database base DN (ou=people, ou=groups)
+base passwd {{ ssh_ldap_user_ou }}
+base group {{ ssh_ldap_group_ou }}
+base shadow {{ ssh_ldap_user_ou }}
+
+# posixAccount / posixGroup (default filters and maps)
+# filter passwd (objectClass=posixAccount)
+# filter group (objectClass=posixGroup)

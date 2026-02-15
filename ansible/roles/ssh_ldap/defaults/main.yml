@@ -1,0 +1,48 @@
+---
+# SSH + LDAP authentication: NSS/PAM and SSH keys from LDAP (openldap/openssh-lpk)
+# Use after openldap role on the same host, or set ldap_uri to the LDAP server FQDN.
+
+# LDAP connection (default: same as openldap role)
+ssh_ldap_uri: "ldaps://{{ openldap_fqdn | default('localhost') }}:636"
+ssh_ldap_base_dn: "{{ openldap_base_dn }}"
+ssh_ldap_bind_dn: "cn=admin,{{ ssh_ldap_base_dn }}"
+ssh_ldap_bind_password: "{{ openldap_admin_password }}"
+
+# TLS: path to CA cert for server verification (use allow for self-signed)
+ssh_ldap_tls_cacert: "{{ openldap_ca_cert | default('/etc/ldap/ssl/ca.crt') }}"
+ssh_ldap_tls_reqcert: "allow"  # allow self-signed; use "demand" with proper CA
+
+# NSS: OUs for users and groups (must match LDAP structure; posixAccount / posixGroup)
+ssh_ldap_user_ou: "ou=people,{{ ssh_ldap_base_dn }}"
+ssh_ldap_group_ou: "ou=groups,{{ ssh_ldap_base_dn }}"
+
+# NSS nsswitch: order for passwd, group, shadow (ldap after files)
+ssh_ldap_nss_passwd: "files ldap"
+ssh_ldap_nss_group: "files ldap"
+ssh_ldap_nss_shadow: "files ldap"
+
+# PAM: use LDAP for auth/account/session (session can create homedir)
+ssh_ldap_pam_auth: true
+ssh_ldap_pam_account: true
+ssh_ldap_pam_session: true   # create home dir on first login if using pam_mkhomedir
+
+# SSH: fetch authorized keys from LDAP (openssh-lpk schema, sshPublicKey)
+# Script runs as root so it can read LDAP bind credentials from /etc/ssh/ldap-keys.conf
+ssh_ldap_authorized_keys_command: true
+ssh_ldap_authorized_keys_command_user: "root"
+ssh_ldap_authorized_keys_config: "/etc/ssh/ldap-keys.conf"
+ssh_ldap_authorized_keys_pwfile: "/etc/ssh/ldap-keys.pw"
+
+# Optional: create home dir on first login (requires pam_mkhomedir in session)
+ssh_ldap_create_homedir: true
+ssh_ldap_homedir_umask: "0022"
+
+# SSH: only allow users in these LDAP groups (enforced via sshd AllowGroups + PAM pam_succeed_if ingroup)
+# Groups are resolved via NSS/LDAP (posixGroup). Empty list = no group restriction.
+ssh_ldap_allowed_ssh_groups:
+  - ssh-admins
+  - ssh-users
+
+# Sudo: grant sudo to members of cn=ssh-admins (via /etc/sudoers.d/99-ssh-admins)
+ssh_ldap_sudoers_ssh_admins: true
+ssh_ldap_sudoers_spec: "ALL=(ALL) ALL"  # sudoers spec for ssh-admins

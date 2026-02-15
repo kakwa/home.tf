@@ -1,0 +1,144 @@
+---
+- name: Install NSS/PAM LDAP and SSH packages
+  apt:
+    name:
+      - nss-pam-ldapd
+      - libpam-ldapd
+      - openssh-server
+      - libpam-mkhomedir
+      - ldap-utils
+    state: present
+    update_cache: true
+
+- name: Ensure nslcd can read TLS CA cert
+  file:
+    path: "{{ ssh_ldap_tls_cacert | dirname }}"
+    state: directory
+    mode: "0755"
+  when: ssh_ldap_tls_cacert is defined
+
+- name: Deploy nslcd.conf (NSS/PAM LDAP client)
+  template:
+    src: nslcd.conf.j2
+    dest: /etc/nslcd.conf
+    owner: root
+    group: root
+    mode: "0600"
+  notify: restart nslcd
+
+- name: Deploy nsswitch.conf (NSS with LDAP)
+  template:
+    src: nsswitch.conf.j2
+    dest: /etc/nsswitch.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add LDAP auth to PAM sshd (before common-auth)
+  lineinfile:
+    path: /etc/pam.d/sshd
+    insertbefore: '^@include common-auth'
+    line: "auth    sufficient    pam_ldap.so use_first_pass"
+    state: present
+  when: ssh_ldap_pam_auth | default(true) | bool
+
+# Restrict SSH account to allowed LDAP groups via PAM (no script): root allowed, then LDAP + group check
+- name: Add LDAP account and allowed-groups check to PAM sshd (before common-account)
+  blockinfile:
+    path: /etc/pam.d/sshd
+    insertbefore: '^@include common-account'
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - ssh_ldap account + allowed groups"
+    block: |
+      account sufficient    pam_succeed_if.so user = root
+      account required     pam_ldap.so
+      account sufficient   pam_succeed_if.so user ingroup {{ ssh_ldap_allowed_ssh_groups | join(':') }}
+      account required     pam_deny.so
+    state: present
+  when: ssh_ldap_pam_account | default(true) | bool and (ssh_ldap_allowed_ssh_groups | default([]) | length > 0)
+
+- name: Add LDAP account only to PAM sshd (no group restriction)
+  lineinfile:
+    path: /etc/pam.d/sshd
+    insertbefore: '^@include common-account'
+    line: "account sufficient    pam_ldap.so"
+    state: present
+  when: ssh_ldap_pam_account | default(true) | bool and (ssh_ldap_allowed_ssh_groups | default([]) | length == 0)
+
+- name: Add LDAP session and mkhomedir to PAM sshd (before common-session)
+  blockinfile:
+    path: /etc/pam.d/sshd
+    insertbefore: '^@include common-session'
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - ssh_ldap"
+    block: |
+      session sufficient    pam_ldap.so
+      session optional      pam_mkhomedir.so umask={{ ssh_ldap_homedir_umask }}
+    state: present
+  when: ssh_ldap_pam_session | default(true) | bool and ssh_ldap_create_homedir | default(true) | bool
+
+- name: Add LDAP session only to PAM sshd (no mkhomedir)
+  lineinfile:
+    path: /etc/pam.d/sshd
+    insertbefore: '^@include common-session'
+    line: "session sufficient    pam_ldap.so"
+    state: present
+  when: ssh_ldap_pam_session | default(true) | bool and not (ssh_ldap_create_homedir | default(true) | bool)
+
+- name: Ensure sshd_config.d exists
+  file:
+    path: /etc/ssh/sshd_config.d
+    state: directory
+    mode: "0755"
+
+# Restrict SSH to allowed groups via sshd AllowGroups (uses NSS/LDAP group resolution)
+- name: Configure sshd AllowGroups (only these LDAP groups may use SSH)
+  copy:
+    content: |
+      # Only users in these groups (resolved via NSS/LDAP) may use SSH
+      AllowGroups {{ ssh_ldap_allowed_ssh_groups | join(' ') }}
+    dest: /etc/ssh/sshd_config.d/98-ldap-allow-groups.conf
+    mode: "0644"
+  notify: restart ssh
+  when: ssh_ldap_allowed_ssh_groups | default([]) | length > 0
+
+- name: Deploy SSH AuthorizedKeysCommand script (LDAP sshPublicKey)
+  template:
+    src: ssh-ldap-keys.sh.j2
+    dest: /usr/local/bin/ssh-ldap-keys
+    owner: root
+    group: root
+    mode: "0750"
+  when: ssh_ldap_authorized_keys_command | default(true) | bool
+
+- name: Deploy LDAP bind password file for AuthorizedKeysCommand
+  copy:
+    content: "{{ ssh_ldap_bind_password }}"
+    dest: "{{ ssh_ldap_authorized_keys_pwfile }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: ssh_ldap_authorized_keys_command | default(true) | bool
+
+- name: Deploy LDAP config for AuthorizedKeysCommand
+  template:
+    src: ldap-keys.conf.j2
+    dest: "{{ ssh_ldap_authorized_keys_config }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: ssh_ldap_authorized_keys_command | default(true) | bool
+
+- name: Configure sshd to use LDAP for authorized keys
+  copy:
+    content: |
+      AuthorizedKeysCommand /usr/local/bin/ssh-ldap-keys
+      AuthorizedKeysCommandUser {{ ssh_ldap_authorized_keys_command_user }}
+    dest: /etc/ssh/sshd_config.d/99-ldap-keys.conf
+    mode: "0644"
+  notify: restart ssh
+  when: ssh_ldap_authorized_keys_command | default(true) | bool
+
+- name: Ensure nslcd is started and enabled
+  service:
+    name: nslcd
+    state: started
+    enabled: true

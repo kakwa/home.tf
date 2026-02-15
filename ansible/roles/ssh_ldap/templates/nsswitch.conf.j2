@@ -1,0 +1,15 @@
+# /etc/nsswitch.conf - NSS with LDAP (managed by Ansible)
+
+passwd:         {{ ssh_ldap_nss_passwd }}
+group:          {{ ssh_ldap_nss_group }}
+shadow:         {{ ssh_ldap_nss_shadow }}
+
+hosts:          files dns
+networks:       files
+
+protocols:      db files
+services:       db files
+ethers:         db files
+rpc:            db files
+
+netgroup:       nis
