@@ -1,0 +1,40 @@
+---
+# LdapCherry: Web UI for LDAP (use after openldap role; same base DN and TLS)
+
+# LDAP connection: use ldaps (openldap role provides TLS)
+ldapcherry_ldap_uri: "ldaps://localhost:636"
+ldapcherry_ldap_ca: "{{ openldap_ca_cert | default('/etc/ldap/ssl/ca.crt') }}"
+ldapcherry_base_dn: "{{ openldap_base_dn }}"
+ldapcherry_bind_dn: "cn=admin,{{ openldap_base_dn }}"
+ldapcherry_bind_password: "{{ openldap_admin_password }}"
+
+# OUs under base DN (must match openldap base structure)
+ldapcherry_userdn: "ou=people,{{ openldap_base_dn }}"
+ldapcherry_groupdn: "ou=groups,{{ openldap_base_dn }}"
+
+# Listen address and port
+ldapcherry_listen_host: "127.0.0.1"
+ldapcherry_listen_port: 8080
+
+# Session timeout (minutes)
+ldapcherry_session_timeout: 10
+
+# Password policy (simple)
+ldapcherry_ppolicy_module: "ldapcherry.ppolicy.simple"
+ldapcherry_min_length: 8
+ldapcherry_min_upper: 1
+ldapcherry_min_digit: 1
+
+# Nginx reverse proxy (expose ldapcherry via nginx)
+ldapcherry_nginx_enable: true
+ldapcherry_nginx_server_name: "ldap.int.{{ openldap_domain | default('kakwalab.ovh') }}"
+ldapcherry_nginx_listen_port: 80
+
+# Nginx SSL (self-signed certificates)
+ldapcherry_nginx_ssl_enable: true
+ldapcherry_nginx_ssl_port: 443
+ldapcherry_nginx_ssl_cert_dir: "/etc/nginx/ssl/ldapcherry"
+ldapcherry_nginx_ssl_cert: "{{ ldapcherry_nginx_ssl_cert_dir }}/cert.pem"
+ldapcherry_nginx_ssl_key: "{{ ldapcherry_nginx_ssl_cert_dir }}/key.pem"
+ldapcherry_nginx_ssl_self_signed_cn: "{{ ldapcherry_nginx_server_name }}"
+ldapcherry_nginx_ssl_valid_days: 3650

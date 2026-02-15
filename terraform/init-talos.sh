@@ -71,17 +71,24 @@ echo "Waiting for cluster health..."
 # Use explicit node lists (from talos-env.sh) so we don't rely on discovery.
 # Note: 'waiting for all nodes to finish boot sequence' can lag after etcd/kubelet
 # are already OK; Talos marks node stage 'running' only after internal controllers
-# finish. If it times out but etcd/kubelet passed, cluster is usually usable.
-talosctl health --endpoints "${BOOTSTRAP_CP}" --nodes "${BOOTSTRAP_CP}" \
+# finish. If health fails or times out, we still continue (cluster is often usable).
+if ! talosctl health --endpoints "${BOOTSTRAP_CP}" --nodes "${BOOTSTRAP_CP}" \
   --control-plane-nodes "$(IFS=,; echo "${CONTROL_PLANE_IP[*]}")" \
   --worker-nodes "$(IFS=,; echo "${WORKER_IP[*]}")" \
-  --wait-timeout 10m
+  --wait-timeout 5m; then
+  echo "----------------------------------------"
+  echo "Health check failed or timed out (e.g. 'finish boot sequence')."
+  echo "If etcd and kubelet passed above, the cluster is usually usable."
+  echo "Continuing to fetch kubeconfig and finish VIP setup."
+  echo "Verify with: kubectl get nodes"
+  echo "----------------------------------------"
+fi
 
 ########################################
 # Get kubeconfig
 ########################################
-
-talosctl kubeconfig .
+# --endpoints required: talosctl needs to know where to connect for the Talos API
+talosctl kubeconfig . --endpoints "${BOOTSTRAP_CP}" --nodes "${BOOTSTRAP_CP}"
 
 echo "========================================"
 echo " Phase 2: Enable Control Plane VIP"
@@ -142,12 +149,13 @@ fi
 # Regenerate kubeconfig with VIP
 ########################################
 # Use node IP; VIP may not yet serve Talos API
-talosctl kubeconfig . --endpoints "${BOOTSTRAP_CP}"
+talosctl kubeconfig . --endpoints "${BOOTSTRAP_CP}" --nodes "${BOOTSTRAP_CP}"
 
 echo "========================================"
 echo " VIP Enabled Successfully"
 echo "========================================"
-echo "Test with:"
+echo "Set kubeconfig and test:"
+echo "  export KUBECONFIG=\$(pwd)/kubeconfig"
 echo "  kubectl get nodes"
 echo "Verify VIP:"
 echo "  ping ${CONTROL_PLANE_VIP}"

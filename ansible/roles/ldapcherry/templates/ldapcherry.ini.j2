@@ -1,0 +1,59 @@
+# LdapCherry configuration - base DN {{ ldapcherry_base_dn }}, TLS via ldaps
+# Managed by Ansible
+
+[global]
+server.socket_host = '{{ ldapcherry_listen_host }}'
+server.socket_port = {{ ldapcherry_listen_port }}
+server.thread_pool = 8
+request.show_tracebacks = False
+
+log.error_handler = 'syslog'
+log.access_handler = 'none'
+log.level = 'info'
+
+tools.sessions.on = True
+tools.sessions.timeout = {{ ldapcherry_session_timeout }}
+
+[attributes]
+attributes.file = '/etc/ldapcherry/attributes.yml'
+
+[roles]
+roles.file = '/etc/ldapcherry/roles.yml'
+
+[backends]
+# LDAP backend - ldaps, certificate verification disabled
+ldap.module = 'ldapcherry.backend.backendLdap'
+ldap.display_name = 'Kakwa Lab LDAP'
+ldap.uri = '{{ ldapcherry_ldap_uri }}'
+ldap.checkcert = 'off'
+ldap.starttls = 'off'
+ldap.binddn = '{{ ldapcherry_bind_dn }}'
+ldap.password = '{{ ldapcherry_bind_password }}'
+ldap.timeout = 5
+
+ldap.groupdn = '{{ ldapcherry_groupdn }}'
+ldap.userdn = '{{ ldapcherry_userdn }}'
+
+ldap.user_filter_tmpl = '(uid=%(username)s)'
+ldap.group_filter_tmpl = '(member=uid=%(username)s,{{ ldapcherry_userdn }})'
+ldap.search_filter_tmpl = '(|(uid=%(searchstring)s*)(sn=%(searchstring)s*))'
+ldap.group_attr.member = "%(dn)s"
+
+ldap.objectclasses = 'top, person, posixAccount, inetOrgPerson, ldapPublicKey'
+ldap.dn_user_attr = 'uid'
+
+[ppolicy]
+ppolicy.module = '{{ ldapcherry_ppolicy_module }}'
+min_length = {{ ldapcherry_min_length }}
+min_upper = {{ ldapcherry_min_upper }}
+min_digit = {{ ldapcherry_min_digit }}
+
+[auth]
+auth.mode = 'or'
+
+[resources]
+templates.dir = '/usr/share/ldapcherry/templates/'
+
+[/static]
+tools.staticdir.on = True
+tools.staticdir.dir = '/usr/share/ldapcherry/static/'

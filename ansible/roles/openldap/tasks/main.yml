@@ -1,0 +1,338 @@
+---
+- name: Gather package facts
+  package_facts:
+    manager: auto
+
+- name: Set slapd debconf selections (domain and org)
+  debconf:
+    name: slapd
+    question: "{{ item.question }}"
+    value: "{{ item.value }}"
+    vtype: "{{ item.vtype | default('string') }}"
+  loop:
+    - { question: "slapd/internal/generated_adminpw", value: "{{ openldap_admin_password }}", vtype: "password" }
+    - { question: "slapd/internal/adminpw", value: "{{ openldap_admin_password }}", vtype: "password" }
+    - { question: "slapd/password1", value: "{{ openldap_admin_password }}", vtype: "password" }
+    - { question: "slapd/password2", value: "{{ openldap_admin_password }}", vtype: "password" }
+    - { question: "slapd/domain", value: "{{ openldap_domain }}" }
+    - { question: "shared/organization", value: "{{ openldap_organization }}" }
+    - { question: "slapd/backend", value: "MDB" }
+    - { question: "slapd/no_install_ldap_config", value: "false", vtype: "boolean" }
+    - { question: "slapd/purge_database", value: "false", vtype: "boolean" }
+    - { question: "slapd/move_old_database", value: "true", vtype: "boolean" }
+    - { question: "slapd/allow_ldap_v2", value: "false", vtype: "boolean" }
+  when: "'slapd' not in ansible_facts.packages"
+
+- name: Install OpenLDAP server and utilities
+  apt:
+    name:
+      - slapd
+      - ldap-utils
+      - gnutls-bin
+    state: present
+    update_cache: true
+  when: "'slapd' not in ansible_facts.packages"
+
+- name: Create OpenLDAP SSL directory
+  file:
+    path: "{{ openldap_ssl_dir }}"
+    state: directory
+    mode: "0750"
+    owner: root
+    group: openldap
+
+- name: Create OpenLDAP LDIF directory
+  file:
+    path: "{{ openldap_ldif_dir }}"
+    state: directory
+    mode: "0750"
+    owner: root
+    group: openldap
+
+- name: Generate CA key
+  openssl_privatekey:
+    path: "{{ openldap_ssl_dir }}/ca.key"
+    owner: root
+    group: openldap
+    mode: "0640"
+  register: openldap_ca_key
+
+- name: Generate self-signed CA certificate (openssl CLI)
+  command: >
+    openssl req -new -x509 -days 3650
+    -key {{ openldap_ssl_dir }}/ca.key -out {{ openldap_ssl_dir }}/ca.crt
+    -subj "/O={{ openldap_organization }}/CN=Kakwa Lab LDAP CA"
+  args:
+    creates: "{{ openldap_ssl_dir }}/ca.crt"
+
+- name: Generate LDAP server key
+  openssl_privatekey:
+    path: "{{ openldap_ssl_dir }}/ldap.key"
+    owner: openldap
+    group: openldap
+    mode: "0640"
+
+- name: Generate LDAP server certificate signing request
+  command: >
+    openssl req -new -key {{ openldap_ssl_dir }}/ldap.key -out {{ openldap_ssl_dir }}/ldap.csr
+    -subj "/O={{ openldap_organization }}/CN={{ openldap_fqdn }}"
+    -addext "subjectAltName=DNS:{{ openldap_fqdn }},DNS:utility,DNS:localhost"
+  args:
+    creates: "{{ openldap_ssl_dir }}/ldap.csr"
+
+- name: Sign LDAP server certificate with CA
+  command: >
+    openssl x509 -req -in {{ openldap_ssl_dir }}/ldap.csr
+    -CA {{ openldap_ssl_dir }}/ca.crt -CAkey {{ openldap_ssl_dir }}/ca.key
+    -CAcreateserial -out {{ openldap_ssl_dir }}/ldap.crt -days 3650
+  args:
+    creates: "{{ openldap_ssl_dir }}/ldap.crt"
+
+- name: Set ownership on LDAP server certificate and key
+  file:
+    path: "{{ item }}"
+    owner: openldap
+    group: openldap
+    mode: "0640"
+  loop:
+    - "{{ openldap_ssl_dir }}/ldap.crt"
+    - "{{ openldap_ssl_dir }}/ldap.key"
+
+- name: Create LDIF for TLS configuration (cn=config)
+  copy:
+    content: |
+      dn: cn=config
+      changetype: modify
+      replace: olcTLSCACertificateFile
+      olcTLSCACertificateFile: {{ openldap_ca_cert }}
+      -
+      replace: olcTLSCertificateFile
+      olcTLSCertificateFile: {{ openldap_server_cert }}
+      -
+      replace: olcTLSCertificateKeyFile
+      olcTLSCertificateKeyFile: {{ openldap_server_key }}
+      -
+      replace: olcLocalSSF
+      olcLocalSSF: 71
+      -
+      replace: olcSecurity
+      olcSecurity: tls=1
+    dest: "{{ openldap_ldif_dir }}/openldap-tls.ldif"
+    mode: "0600"
+  notify: restart slapd
+
+- name: Apply TLS configuration to slapd (ldapi EXTERNAL)
+  command: ldapmodify -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/openldap-tls.ldif
+  register: openldap_tls_apply
+  changed_when: openldap_tls_apply.rc == 0
+  failed_when: false
+
+- name: Add olcLocalSSF via LDAPS (recover when ldapi requires confidentiality)
+  copy:
+    content: |
+      dn: cn=config
+      changetype: modify
+      replace: olcLocalSSF
+      olcLocalSSF: 71
+    dest: "{{ openldap_ldif_dir }}/openldap-localssf.ldif"
+    mode: "0600"
+  when: openldap_tls_apply.rc != 0
+
+- name: Configure SLAPD_SERVICES (ldap + ldaps)
+  lineinfile:
+    path: /etc/default/slapd
+    regexp: "^#?SLAPD_SERVICES=.*"
+    line: "SLAPD_SERVICES=\"{{ openldap_services }}\""
+    create: true
+  notify: restart slapd
+
+- name: Ensure slapd is started and enabled
+  service:
+    name: slapd
+    state: started
+    enabled: true
+
+- name: Flush handlers so slapd restarts with ldaps before OU/group creation
+  meta: flush_handlers
+
+- name: Load OpenSSH LPK schema (sshPublicKey) into slapd
+  copy:
+    src: openssh-lpk.ldif
+    dest: "{{ openldap_ldif_dir }}/openssh-lpk.ldif"
+    mode: "0600"
+  register: openldap_schema_copy
+
+- name: Add OpenSSH LPK schema to cn=config
+  command: ldapadd -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/openssh-lpk.ldif
+  register: openldap_schema_add
+  failed_when: false
+  changed_when: openldap_schema_add.rc == 0
+  become: true
+
+- name: Get existing OUs under base DN
+  community.general.ldap_search:
+    dn: "{{ openldap_base_dn }}"
+    scope: "onelevel"
+    filter: "(objectClass=organizationalUnit)"
+    attrs: ["ou"]
+    server_uri: "ldaps://127.0.0.1:636/"
+    bind_dn: "cn=admin,{{ openldap_base_dn }}"
+    bind_pw: "{{ openldap_admin_password }}"
+    validate_certs: false
+  register: openldap_existing_ous
+  failed_when: false
+  changed_when: false
+
+- name: Create base OUs (people, groups) in LDAP
+  community.general.ldap_entry:
+    dn: "ou={{ item.ou }},{{ openldap_base_dn }}"
+    objectClass: organizationalUnit
+    attributes:
+      ou: "{{ item.ou }}"
+    state: present
+    server_uri: "ldaps://127.0.0.1:636/"
+    bind_dn: "cn=admin,{{ openldap_base_dn }}"
+    bind_pw: "{{ openldap_admin_password }}"
+    validate_certs: false
+  loop:
+    - { ou: "people" }
+    - { ou: "groups" }
+  when: item.ou not in (openldap_existing_ous.results | default([]) | map(attribute='ou') | flatten | list)
+  ignore_errors: true
+  register: openldap_ou_result
+  changed_when: openldap_ou_result is not failed
+
+- name: Create default groups cn=users and cn=admins for ldapcherry
+  community.general.ldap_entry:
+    dn: "cn={{ item }},ou=groups,{{ openldap_base_dn }}"
+    objectClass: groupOfNames
+    attributes:
+      cn: "{{ item }}"
+      member: ["cn=admin,{{ openldap_base_dn }}"]
+    state: present
+    server_uri: "ldaps://127.0.0.1:636/"
+    bind_dn: "cn=admin,{{ openldap_base_dn }}"
+    bind_pw: "{{ openldap_admin_password }}"
+    validate_certs: false
+  loop:
+    - users
+    - admins
+  ignore_errors: true
+  register: openldap_default_groups_result
+
+# Optional: create default user (carpenti) in ou=people and add to cn=users + cn=admins (only if user does not exist)
+- name: Check if default user (carpenti) exists in LDAP
+  community.general.ldap_search:
+    dn: "ou=people,{{ openldap_base_dn }}"
+    filter: "(uid={{ openldap_default_user_uid }})"
+    scope: "onelevel"
+    server_uri: "ldaps://127.0.0.1:636/"
+    bind_dn: "cn=admin,{{ openldap_base_dn }}"
+    bind_pw: "{{ openldap_admin_password }}"
+    validate_certs: false
+  register: openldap_default_user_search
+  when: openldap_default_user_create | default(false) | bool
+
+- name: Hash password for default user (carpenti)
+  command: slappasswd -s "{{ openldap_default_user_password }}"
+  register: openldap_default_user_password_hash
+  changed_when: false
+  when: openldap_default_user_create | default(false) | bool and (openldap_default_user_search.results | default([]) | length == 0)
+
+- name: Create default user (carpenti) in ou=people (if missing)
+  community.general.ldap_entry:
+    dn: "uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"
+    objectClass:
+      - top
+      - person
+      - organizationalPerson
+      - inetOrgPerson
+      - posixAccount
+    attributes:
+      uid: "{{ openldap_default_user_uid }}"
+      cn: "{{ openldap_default_user_cn }}"
+      sn: "{{ openldap_default_user_sn }}"
+      uidNumber: "{{ openldap_default_user_uid_number | string }}"
+      gidNumber: "{{ openldap_default_user_gid_number | string }}"
+      homeDirectory: "{{ openldap_default_user_home }}"
+      loginShell: "{{ openldap_default_user_shell }}"
+      userPassword: "{{ openldap_default_user_password_hash.stdout }}"
+    state: present
+    server_uri: "ldaps://127.0.0.1:636/"
+    bind_dn: "cn=admin,{{ openldap_base_dn }}"
+    bind_pw: "{{ openldap_admin_password }}"
+    validate_certs: false
+  register: openldap_default_user_created
+  when: openldap_default_user_create | default(false) | bool and (openldap_default_user_search.results | default([]) | length == 0)
+
+- name: Deploy LDIF to add sshPublicKey to default user
+  template:
+    src: add-ssh-key.ldif.j2
+    dest: "{{ openldap_ldif_dir }}/add-ssh-key-{{ openldap_default_user_uid }}.ldif"
+    mode: "0600"
+  when: >
+    openldap_default_user_create | default(false) | bool
+    and (openldap_default_user_ssh_public_keys | default([]) | length > 0)
+    and ((openldap_default_user_search.results | default([]) | length > 0)
+         or (openldap_default_user_created is defined and openldap_default_user_created is changed))
+
+- name: Add SSH public keys to default user via ldapi (OpenSSH LPK schema)
+  command: ldapmodify -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/add-ssh-key-{{ openldap_default_user_uid }}.ldif
+  register: openldap_default_user_ssh_add
+  failed_when: false
+  changed_when: openldap_default_user_ssh_add.rc == 0
+  become: true
+  when: >
+    openldap_default_user_create | default(false) | bool
+    and (openldap_default_user_ssh_public_keys | default([]) | length > 0)
+    and ((openldap_default_user_search.results | default([]) | length > 0)
+         or (openldap_default_user_created is defined and openldap_default_user_created is changed))
+
+- name: Add SSH public keys to default user via LDAPS (ensure key present)
+  community.general.ldap_attrs:
+    dn: "uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"
+    state: present
+    attributes:
+      objectClass: ["ldapPublicKey"]
+      sshPublicKey: "{{ openldap_default_user_ssh_public_keys }}"
+    server_uri: "ldaps://127.0.0.1:636/"
+    bind_dn: "cn=admin,{{ openldap_base_dn }}"
+    bind_pw: "{{ openldap_admin_password }}"
+    validate_certs: false
+  when: >
+    openldap_default_user_create | default(false) | bool
+    and (openldap_default_user_ssh_public_keys | default([]) | length > 0)
+    and (openldap_default_user_search.results | default([]) | length > 0)
+  register: openldap_default_user_ssh_ldaps
+  failed_when: false
+  changed_when: openldap_default_user_ssh_ldaps is not failed
+
+- name: Add default user (carpenti) to group cn=users
+  community.general.ldap_attrs:
+    dn: "cn=users,ou=groups,{{ openldap_base_dn }}"
+    state: present
+    attributes:
+      member: ["uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"]
+    server_uri: "ldaps://127.0.0.1:636/"
+    bind_dn: "cn=admin,{{ openldap_base_dn }}"
+    bind_pw: "{{ openldap_admin_password }}"
+    validate_certs: false
+  when: >
+    openldap_default_user_create | default(false) | bool
+    and ((openldap_default_user_search.results | default([]) | length > 0)
+         or (openldap_default_user_created is defined and openldap_default_user_created is changed))
+
+- name: Add default user (carpenti) to group cn=admins
+  community.general.ldap_attrs:
+    dn: "cn=admins,ou=groups,{{ openldap_base_dn }}"
+    state: present
+    attributes:
+      member: ["uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"]
+    server_uri: "ldaps://127.0.0.1:636/"
+    bind_dn: "cn=admin,{{ openldap_base_dn }}"
+    bind_pw: "{{ openldap_admin_password }}"
+    validate_certs: false
+  when: >
+    openldap_default_user_create | default(false) | bool
+    and ((openldap_default_user_search.results | default([]) | length > 0)
+         or (openldap_default_user_created is defined and openldap_default_user_created is changed))

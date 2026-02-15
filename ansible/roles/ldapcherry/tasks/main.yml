@@ -1,0 +1,107 @@
+---
+- name: Install ldapcherry package
+  apt:
+    name: ldapcherry
+    state: present
+    update_cache: true
+
+- name: Ensure ldapcherry config directory exists
+  file:
+    path: /etc/ldapcherry
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Deploy ldapcherry.ini
+  template:
+    src: ldapcherry.ini.j2
+    dest: /etc/ldapcherry/ldapcherry.ini
+    owner: root
+    group: ldapcherry
+    mode: "0640"
+  notify: restart ldapcherry
+
+- name: Deploy attributes.yml for ldapcherry
+  template:
+    src: attributes.yml.j2
+    dest: /etc/ldapcherry/attributes.yml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart ldapcherry
+
+- name: Deploy roles.yml for ldapcherry
+  template:
+    src: roles.yml.j2
+    dest: /etc/ldapcherry/roles.yml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart ldapcherry
+
+- name: Ensure ldapcherry service is started and enabled
+  service:
+    name: ldapcherry
+    state: started
+    enabled: true
+
+# Nginx reverse proxy for ldapcherry
+- name: Install nginx
+  apt:
+    name: nginx
+    state: present
+    update_cache: true
+  when: ldapcherry_nginx_enable | default(true) | bool
+
+- name: Ensure nginx SSL cert directory exists for ldapcherry
+  file:
+    path: "{{ ldapcherry_nginx_ssl_cert_dir }}"
+    state: directory
+    mode: "0750"
+    owner: root
+    group: root
+  when: ldapcherry_nginx_enable | default(true) | bool and ldapcherry_nginx_ssl_enable | default(false) | bool
+
+- name: Generate self-signed SSL certificate for ldapcherry nginx
+  command: >-
+    openssl req -x509 -nodes -days {{ ldapcherry_nginx_ssl_valid_days }}
+    -newkey rsa:2048
+    -keyout {{ ldapcherry_nginx_ssl_key }}
+    -out {{ ldapcherry_nginx_ssl_cert }}
+    -subj "/CN={{ ldapcherry_nginx_ssl_self_signed_cn }}"
+  args:
+    creates: "{{ ldapcherry_nginx_ssl_cert }}"
+  when: ldapcherry_nginx_enable | default(true) | bool and ldapcherry_nginx_ssl_enable | default(false) | bool
+  notify: reload nginx
+
+- name: Deploy nginx site config for ldapcherry
+  template:
+    src: nginx-ldapcherry.conf.j2
+    dest: /etc/nginx/sites-available/ldapcherry
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
+  when: ldapcherry_nginx_enable | default(true) | bool
+
+- name: Remove default nginx site (so ldapcherry can use port 80)
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  when: ldapcherry_nginx_enable | default(true) | bool
+
+- name: Enable ldapcherry nginx site
+  file:
+    src: /etc/nginx/sites-available/ldapcherry
+    dest: /etc/nginx/sites-enabled/ldapcherry
+    state: link
+  notify: reload nginx
+  when: ldapcherry_nginx_enable | default(true) | bool
+
+- name: Ensure nginx is started and enabled
+  service:
+    name: nginx
+    state: started
+    enabled: true
+  when: ldapcherry_nginx_enable | default(true) | bool

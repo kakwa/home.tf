@@ -1,0 +1,10 @@
+# Add ldapPublicKey objectClass and sshPublicKey to default user (applied via ldapmodify -Y EXTERNAL)
+dn: uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}
+changetype: modify
+add: objectClass
+objectClass: ldapPublicKey
+-
+add: sshPublicKey
+{% for key in openldap_default_user_ssh_public_keys %}
+sshPublicKey: {{ key }}
+{% endfor %}

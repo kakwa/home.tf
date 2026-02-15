@@ -1,0 +1,134 @@
+# LdapCherry attributes - mapped to LDAP (base {{ ldapcherry_base_dn }})
+# Managed by Ansible
+
+cn:
+ description: "First Name and Display Name"
+ display_name: "Display Name"
+ type: string
+ weight: 30
+ autofill:
+   function: lcDisplayName
+   args:
+     - $first-name
+     - $name
+ backends:
+   ldap: cn
+
+first-name:
+ description: "First name of the user"
+ display_name: "First Name"
+ search_displayed: True
+ type: string
+ weight: 20
+ backends:
+   ldap: givenName
+
+name:
+ description: "Family name of the user"
+ display_name: "Name"
+ search_displayed: True
+ weight: 10
+ type: string
+ backends:
+   ldap: sn
+
+email:
+ description: "Email of the user"
+ display_name: "Email"
+ search_displayed: True
+ type: email
+ weight: 40
+ autofill:
+   function: lcMail
+   args:
+     - $first-name
+     - $name
+     - '@{{ ldapcherry_mail_domain | default("kakwalab.ovh") }}'
+ backends:
+   ldap: mail
+
+uid:
+ description: "UID of the user"
+ display_name: "UID"
+ search_displayed: True
+ key: True
+ type: string
+ weight: 50
+ autofill:
+   function: lcUid
+   args:
+     - $first-name
+     - $name
+     - '10000'
+     - '40000'
+ backends:
+   ldap: uid
+
+uidNumber:
+ description: "User ID Number of the user"
+ display_name: "UID Number"
+ weight: 60
+ type: int
+ autofill:
+   function: lcUidNumber
+   args:
+     - $first-name
+     - $name
+     - '10000'
+     - '40000'
+ backends:
+   ldap: uidNumber
+
+gidNumber:
+ description: "Group ID Number of the user"
+ display_name: "GID Number"
+ weight: 70
+ type: int
+ default: '10000'
+ backends:
+   ldap: gidNumber
+
+shell:
+ description: "Shell of the user"
+ display_name: "Shell"
+ weight: 80
+ self: True
+ type: stringlist
+ values:
+   - /bin/bash
+   - /bin/zsh
+   - /bin/sh
+ backends:
+   ldap: loginShell
+
+home:
+ description: "Home user path"
+ display_name: "Home"
+ weight: 90
+ type: string
+ autofill:
+   function: lcHomeDir
+   args:
+     - $first-name
+     - $name
+     - /home/
+ backends:
+   ldap: homeDirectory
+
+sshPublicKey:
+ description: "SSH public key(s), one per line"
+ display_name: "SSH Public Key"
+ weight: 35
+ self: True
+ type: string
+ backends:
+   ldap: sshPublicKey
+
+password:
+ description: "Password of the user"
+ display_name: "Password"
+ weight: 31
+ self: True
+ type: password
+ backends:
+   ldap: userPassword

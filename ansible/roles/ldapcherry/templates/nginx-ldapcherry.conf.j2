@@ -1,0 +1,52 @@
+# LdapCherry reverse proxy - upstream on 127.0.0.1:8080
+# Managed by Ansible
+# SSL with self-signed certificates when ldapcherry_nginx_ssl_enable is true
+
+{% if ldapcherry_nginx_ssl_enable | default(false) | bool %}
+# Redirect HTTP to HTTPS
+server {
+    listen {{ ldapcherry_nginx_listen_port }} default_server;
+    listen [::]:{{ ldapcherry_nginx_listen_port }} default_server;
+    server_name {{ ldapcherry_nginx_server_name }};
+    return 301 https://$host:{{ ldapcherry_nginx_ssl_port }}$request_uri;
+}
+
+server {
+    listen {{ ldapcherry_nginx_ssl_port }} ssl default_server;
+    listen [::]:{{ ldapcherry_nginx_ssl_port }} ssl default_server;
+    server_name {{ ldapcherry_nginx_server_name }};
+
+    ssl_certificate {{ ldapcherry_nginx_ssl_cert }};
+    ssl_certificate_key {{ ldapcherry_nginx_ssl_key }};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ ldapcherry_listen_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+}
+{% else %}
+server {
+    listen {{ ldapcherry_nginx_listen_port }} default_server;
+    listen [::]:{{ ldapcherry_nginx_listen_port }} default_server;
+    server_name {{ ldapcherry_nginx_server_name }};
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ ldapcherry_listen_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+}
+{% endif %}
