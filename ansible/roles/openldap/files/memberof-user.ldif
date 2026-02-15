@@ -1,0 +1,7 @@
+# Schema for memberOf on user entries (used by memberof overlay).
+# Attribute type memberOf (DN-valued) and auxiliary userWithMemberOf so inetOrgPerson entries can have memberOf.
+dn: cn=memberof-user,cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: memberof-user
+olcAttributeTypes: ( 1.3.6.1.4.1.24552.500.1.1.1.14 NAME 'memberOf' DESC 'DN of group (reverse membership, maintained by memberof overlay)' EQUALITY distinguishedNameMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.12 )
+olcObjectClasses: ( 1.3.6.1.4.1.24552.500.1.1.2.2 NAME 'userWithMemberOf' DESC 'Auxiliary: memberOf for user entries' SUP top AUXILIARY MAY memberOf )

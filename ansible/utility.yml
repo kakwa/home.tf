@@ -10,3 +10,4 @@
     - { role: zsh, tags: ["system", "zsh"] }
     - { role: openldap, tags: ["utility", "openldap"] }
     - { role: ldapcherry, tags: ["utility", "ldapcherry"] }
+    - { role: ssh_ldap, tags: ["utility", "ssh_ldap"] }

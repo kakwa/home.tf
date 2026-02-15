@@ -154,6 +154,64 @@
   changed_when: openldap_schema_add.rc == 0
   become: true
 
+# NIS schema (posixGroup, gidNumber) is usually loaded by Debian slapd; load groupWithMember and memberOf user schema
+- name: Copy groupWithMember and memberOf-user schema LDIFs
+  copy:
+    src: "{{ item }}"
+    dest: "{{ openldap_ldif_dir }}/{{ item }}"
+    mode: "0600"
+  loop:
+    - group-with-member.ldif
+    - memberof-user.ldif
+  become: true
+
+- name: Add groupWithMember schema to cn=config
+  command: ldapadd -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/group-with-member.ldif
+  register: openldap_groupwithmember_add
+  failed_when: false
+  changed_when: openldap_groupwithmember_add.rc == 0
+  become: true
+
+- name: Add memberOf-user schema to cn=config
+  command: ldapadd -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/memberof-user.ldif
+  register: openldap_memberof_user_add
+  failed_when: false
+  changed_when: openldap_memberof_user_add.rc == 0
+  become: true
+
+- name: Get MDB database DN from cn=config
+  command: ldapsearch -Y EXTERNAL -H ldapi:/// -b cn=config -LLL "(olcDatabase=*mdb*)" dn
+  register: openldap_mdb_search
+  become: true
+  changed_when: false
+
+- name: Set OpenLDAP MDB database DN for overlay
+  set_fact:
+    openldap_mdb_dn: "{{ (openldap_mdb_search.stdout | regex_findall('dn:\\s*(.+)') | first) | default('olcDatabase={1}mdb,cn=config') }}"
+
+- name: Create memberof overlay LDIF
+  copy:
+    content: |
+      dn: olcOverlay=memberof,{{ openldap_mdb_dn }}
+      objectClass: olcOverlayConfig
+      objectClass: olcMemberOf
+      olcOverlay: memberof
+      olcMemberOfGroupOC: posixGroup
+      olcMemberOfMemberAD: member
+      olcMemberOfMemberOfAD: memberOf
+      olcMemberOfRefInt: "TRUE"
+      olcMemberOfDangling: ignore
+    dest: "{{ openldap_ldif_dir }}/memberof-overlay.ldif"
+    mode: "0600"
+  become: true
+
+- name: Add memberof overlay to MDB database
+  command: ldapadd -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/memberof-overlay.ldif
+  register: openldap_memberof_overlay_add
+  failed_when: false
+  changed_when: openldap_memberof_overlay_add.rc == 0
+  become: true
+
 - name: Apply TLS configuration to slapd (ldapi EXTERNAL)
   command: ldapmodify -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/openldap-tls.ldif
   register: openldap_tls_apply
@@ -208,12 +266,15 @@
   register: openldap_ou_result
   changed_when: openldap_ou_result is not failed
 
-- name: Create default groups cn=users and cn=admins for ldapcherry
+- name: Create default groups cn=users and cn=admins for ldapcherry (posixGroup + GIDs)
   community.general.ldap_entry:
     dn: "cn={{ item }},ou=groups,{{ openldap_base_dn }}"
-    objectClass: groupOfNames
+    objectClass:
+      - posixGroup
+      - groupWithMember
     attributes:
       cn: "{{ item }}"
+      gidNumber: "{{ openldap_group_gids[item] | string }}"
       member: ["cn=admin,{{ openldap_base_dn }}"]
     state: present
     server_uri: "ldaps://127.0.0.1:636/"
@@ -225,6 +286,25 @@
     - admins
   ignore_errors: true
   register: openldap_default_groups_result
+
+- name: Create groups ssh-admins, k8s-admins, ssh-users, k8s-users (posixGroup + GIDs, ldapcherry + SSH/sudo)
+  community.general.ldap_entry:
+    dn: "cn={{ item }},ou=groups,{{ openldap_base_dn }}"
+    objectClass:
+      - posixGroup
+      - groupWithMember
+    attributes:
+      cn: "{{ item }}"
+      gidNumber: "{{ openldap_group_gids[item] | string }}"
+      member: ["cn=admin,{{ openldap_base_dn }}"]
+    state: present
+    server_uri: "ldaps://127.0.0.1:636/"
+    bind_dn: "cn=admin,{{ openldap_base_dn }}"
+    bind_pw: "{{ openldap_admin_password }}"
+    validate_certs: false
+  loop: "{{ openldap_role_groups }}"
+  ignore_errors: true
+  register: openldap_role_groups_result
 
 # Optional: create default user (carpenti) in ou=people and add to cn=users + cn=admins (only if user does not exist)
 - name: Check if default user (carpenti) exists in LDAP
@@ -319,7 +399,8 @@
     dn: "cn=users,ou=groups,{{ openldap_base_dn }}"
     state: present
     attributes:
-      member: ["uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"]
+      member: ["cn=admin,{{ openldap_base_dn }}", "uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"]
+      memberUid: ["{{ openldap_default_user_uid }}"]
     server_uri: "ldaps://127.0.0.1:636/"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
@@ -334,11 +415,31 @@
     dn: "cn=admins,ou=groups,{{ openldap_base_dn }}"
     state: present
     attributes:
-      member: ["uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"]
+      member: ["cn=admin,{{ openldap_base_dn }}", "uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"]
+      memberUid: ["{{ openldap_default_user_uid }}"]
     server_uri: "ldaps://127.0.0.1:636/"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
+  when: >
+    openldap_default_user_create | default(false) | bool
+    and ((openldap_default_user_search.results | default([]) | length > 0)
+         or (openldap_default_user_created is defined and openldap_default_user_created is changed))
+
+- name: Add default user (carpenti) to groups ssh-admins and ssh-users (SSH access)
+  community.general.ldap_attrs:
+    dn: "cn={{ item }},ou=groups,{{ openldap_base_dn }}"
+    state: present
+    attributes:
+      member: ["cn=admin,{{ openldap_base_dn }}", "uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"]
+      memberUid: ["{{ openldap_default_user_uid }}"]
+    server_uri: "ldaps://127.0.0.1:636/"
+    bind_dn: "cn=admin,{{ openldap_base_dn }}"
+    bind_pw: "{{ openldap_admin_password }}"
+    validate_certs: false
+  loop:
+    - ssh-admins
+    - ssh-users
   when: >
     openldap_default_user_create | default(false) | bool
     and ((openldap_default_user_search.results | default([]) | length > 0)

@@ -1,0 +1,7 @@
+# Auxiliary objectClass to add member (DN) to posixGroup.
+# Use with posixGroup so groups work with NSS (gidNumber, memberUid) and memberOf overlay / ldapcherry (member).
+# Requires nis schema (posixGroup) to be loaded.
+dn: cn=group-with-member,cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: group-with-member
+olcObjectClasses: ( 1.3.6.1.4.1.24552.500.1.1.2.1 NAME 'groupWithMember' DESC 'Auxiliary: member (DN) for posixGroup' SUP top AUXILIARY MAY member )
