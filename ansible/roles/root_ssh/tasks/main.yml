@@ -28,15 +28,3 @@
     mode: '0600'
     owner: root
     group: root
-
-# Debian VMs only: sudo NOPASSWD for admin group/user
-- name: Deploy sudoers.d/admin (NOPASSWD for admin on Debian VMs)
-  copy:
-    content: "{{ ssh_sudoers_admin }}\n"
-    dest: /etc/sudoers.d/admin
-    owner: root
-    group: root
-    mode: '0400'
-  when:
-    - inventory_hostname in groups.get('debian', [])
-    - ssh_sudoers_admin | length > 0
