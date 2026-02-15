@@ -37,7 +37,7 @@
   file:
     path: "{{ openldap_ssl_dir }}"
     state: directory
-    mode: "0750"
+    mode: "0755"   # 0755 so nslcd (ssh_ldap) can read TLS CA cert; keep in sync with ssh_ldap role
     owner: root
     group: openldap
 
