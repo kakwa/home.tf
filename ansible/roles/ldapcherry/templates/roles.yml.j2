@@ -1,0 +1,18 @@
+# LdapCherry roles - user and admin (groups under {{ ldapcherry_groupdn }})
+# Managed by Ansible. Ensure cn=users and cn=admins exist in LDAP.
+
+user:
+  display_name: User
+  description: Standard user
+  backends_groups:
+    ldap:
+      - cn=users,{{ ldapcherry_groupdn }}
+
+admin:
+  display_name: Admin
+  description: Administrator (full rights in LdapCherry)
+  LC_admins: True
+  backends_groups:
+    ldap:
+      - cn=admins,{{ ldapcherry_groupdn }}
+      - cn=users,{{ ldapcherry_groupdn }}

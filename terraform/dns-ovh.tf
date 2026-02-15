@@ -35,6 +35,15 @@ resource "ovh_domain_zone_record" "talos_k8s" {
   ttl       = 300
 }
 
+# CNAME ldap.int.kakwalab.ovh -> utility.int.kakwalab.ovh (ldapcherry on utility VM)
+resource "ovh_domain_zone_record" "ldap_cname" {
+  zone      = var.ovh_zone
+  subdomain = "ldap.${var.ovh_int_subdomain}"
+  fieldtype = "CNAME"
+  target    = "utility.${var.ovh_int_subdomain}.${var.ovh_zone}"
+  ttl       = 300
+}
+
 output "ovh_cluster_fqdns" {
   description = "Public DNS names for cluster hosts under int.<zone>"
   value = {

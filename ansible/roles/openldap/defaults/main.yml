@@ -1,0 +1,39 @@
+---
+# OpenLDAP server: base DN kakwalab.ovh, TLS/STARTTLS with self-signed cert
+
+openldap_domain: "kakwalab.ovh"
+openldap_organization: "Kakwa Lab"
+# Base DN derived from domain (dc=kakwalab,dc=ovh)
+openldap_base_dn: "dc={{ openldap_domain.split('.')[0] }},dc={{ openldap_domain.split('.')[1] }}"
+
+# FQDN for the LDAP server (used in certificate CN and LDAP URIs)
+openldap_fqdn: "utility.{{ openldap_domain }}"
+
+# Admin password for cn=admin,<base_dn> (override with vault in production)
+openldap_admin_password: "changeme"
+
+# Paths for TLS (self-signed)
+openldap_ssl_dir: "/etc/ldap/ssl"
+openldap_ca_cert: "{{ openldap_ssl_dir }}/ca.crt"
+openldap_server_cert: "{{ openldap_ssl_dir }}/ldap.crt"
+openldap_server_key: "{{ openldap_ssl_dir }}/ldap.key"
+
+# Listen on ldap (STARTTLS), ldaps, and ldapi (required for schema load and local admin)
+openldap_services: "ldap:/// ldaps:/// ldapi:///"
+
+# Permanent directory for LDIF files (TLS config, schema, etc.)
+openldap_ldif_dir: "/etc/ldap/ldifs"
+
+# Optional default user in ou=people, member of cn=users and cn=admins (created only if missing)
+openldap_default_user_create: true
+openldap_default_user_uid: "carpenti"
+openldap_default_user_cn: "Pierre-Francois Carpentier"
+openldap_default_user_sn: "Carpentier"
+openldap_default_user_password: "{{ openldap_admin_password }}"
+openldap_default_user_uid_number: 10000
+openldap_default_user_gid_number: 10000
+openldap_default_user_home: "/home/carpenti"
+openldap_default_user_shell: "/bin/zsh"
+# SSH public keys for the default user (openssh-lpk schema, sshPublicKey attribute)
+openldap_default_user_ssh_public_keys:
+  - "ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAzODQAAAAIbmlzdHAzODQAAABhBIefJ3PQVyfXunlkWc6Ukdw8EZNw8sLX1Pda0p+PckY/maze5K298CiSuE+5LR/9RM5lwx8N8NqnuKTUUSHsfs58jI03RNAuFHaT4Sc6PKS7SfG9t3ZDkCVSdn5Csopwgg== kakwa@tsingtao"

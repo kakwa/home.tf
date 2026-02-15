@@ -33,7 +33,7 @@ variable "talos_extensions" {
   type        = list(string)
   default = [
     "siderolabs/binfmt-misc",
-    "siderolabs/qemu-guest-agent",
+    # "siderolabs/qemu-guest-agent", # doesn't seem to start properly
   ]
 }
 
@@ -112,6 +112,12 @@ variable "debian_authorized_keys" {
   default = [
     "ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAzODQAAAAIbmlzdHAzODQAAABhBIefJ3PQVyfXunlkWc6Ukdw8EZNw8sLX1Pda0p+PckY/maze5K298CiSuE+5LR/9RM5lwx8N8NqnuKTUUSHsfs58jI03RNAuFHaT4Sc6PKS7SfG9t3ZDkCVSdn5Csopwgg== kakwa@tsingtao"
   ]
+}
+
+variable "debian_sudoers_admin" {
+  description = "Sudoers line for NOPASSWD (e.g. '%kakwa ALL=(ALL:ALL) NOPASSWD: ALL'). Set to empty string to skip creating /etc/sudoers.d/admin"
+  type        = string
+  default     = "%kakwa ALL=(ALL:ALL) NOPASSWD: ALL"
 }
 
 variable "vm_spice_listen" {

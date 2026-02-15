@@ -24,6 +24,16 @@ locals {
     "gateway-1" = { memory_mb = 1024, vcpu = 2 }
     "gateway-2" = { memory_mb = 1024, vcpu = 2 }
   }
+  # NOPASSWD sudoers for Debian admin (shared with utility VM)
+  debian_sudoers_cloudinit = var.debian_sudoers_admin != "" ? join("\n", [
+    "    write_files:",
+    "      - path: /etc/sudoers.d/admin",
+    "        content: |",
+    "          ${indent(10, var.debian_sudoers_admin)}",
+    "        permissions: '0400'",
+    "        owner: root:root",
+    ""
+  ]) : ""
 }
 
 resource "libvirt_volume" "gateway_disk" {
@@ -55,6 +65,7 @@ resource "libvirt_cloudinit_disk" "gateway_seed" {
         ssh_authorized_keys:
 ${join("\n", [for k in var.debian_authorized_keys : "          - ${replace(k, "\n", "")}"])}
 
+${local.debian_sudoers_cloudinit}
     chpasswd:
       list: |
         root:password

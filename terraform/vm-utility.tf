@@ -50,6 +50,7 @@ resource "libvirt_cloudinit_disk" "utility_seed" {
         ssh_authorized_keys:
 ${join("\n", [for k in var.debian_authorized_keys : "          - ${replace(k, "\n", "")}"])}
 
+${local.debian_sudoers_cloudinit}
     chpasswd:
       list: |
         root:password
