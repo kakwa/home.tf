@@ -1,0 +1,9 @@
+---
+haproxy_packages:
+  - haproxy
+
+# Kubernetes API gateway: bind address for the frontend (e.g. *:6443 or 192.168.1.19:6443)
+haproxy_k8s_api_bind: "*:6443"
+
+# Backend: list of k8s API servers (control plane). Each: { name: "...", address: "ip_or_fqdn", port: 6443 }
+haproxy_k8s_api_servers: []

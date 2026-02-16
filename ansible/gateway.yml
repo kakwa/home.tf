@@ -1,0 +1,20 @@
+---
+# Gateway VMs: same base as utility (repos, misc-base, vim, zsh, hosts_entries, ssh_ldap)
+# but no openldap/ldapcherry; adds haproxy and keepalived (VIP 192.168.1.19).
+# Set inventory group [gateway] and keepalived_interface per host (e.g. eth0, ens18).
+- name: Gateway VM Setup
+  hosts: all
+  become: true
+  vars:
+    keepalived_vip: 192.168.1.19
+    # HAProxy k8s API gateway: listen on the VIP. Set haproxy_k8s_api_servers in group_vars/inventory.
+    haproxy_k8s_api_bind: "192.168.1.19:6443"
+  roles:
+    - { role: repos, tags: ["system", "repos"] }
+    - { role: misc-base, tags: ["system", "misc-base"] }
+    - { role: vim, tags: ["system", "vim"] }
+    - { role: zsh, tags: ["system", "zsh"] }
+    - { role: hosts_entries, tags: ["system", "hosts"] }
+    - { role: ssh_ldap, tags: ["gateway", "ssh_ldap"] }
+    - { role: haproxy, tags: ["gateway", "haproxy"] }
+    - { role: keepalived, tags: ["gateway", "keepalived"] }

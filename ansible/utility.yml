@@ -8,6 +8,7 @@
     - { role: misc-base, tags: ["system", "misc-base"] }
     - { role: vim, tags: ["system", "vim"] }
     - { role: zsh, tags: ["system", "zsh"] }
+    - { role: hosts_entries, tags: ["system", "hosts"] }
     - { role: openldap, tags: ["utility", "openldap"] }
     - { role: ldapcherry, tags: ["utility", "ldapcherry"] }
     - { role: ssh_ldap, tags: ["utility", "ssh_ldap"] }

@@ -1,0 +1,26 @@
+# Keepalived configuration (managed by Ansible)
+# VIP {{ keepalived_vip }}/{{ keepalived_vip_prefix }} on {{ keepalived_interface }}
+
+vrrp_script chk_haproxy {
+    script "killall -0 haproxy"
+    interval {{ keepalived_chk_haproxy_interval }}
+    weight {{ keepalived_chk_haproxy_weight }}
+}
+
+vrrp_instance VI_1 {
+    state MASTER
+    interface {{ keepalived_interface }}
+    virtual_router_id {{ keepalived_router_id }}
+    priority {{ keepalived_priority }}
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass {{ keepalived_auth_pass }}
+    }
+    virtual_ipaddress {
+        {{ keepalived_vip }}/{{ keepalived_vip_prefix }}
+    }
+    track_script {
+        chk_haproxy
+    }
+}

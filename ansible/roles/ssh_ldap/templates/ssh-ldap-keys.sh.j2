@@ -9,7 +9,6 @@ CONFIG="{{ ssh_ldap_authorized_keys_config }}"
 [ -n "$LDAP_URI" ] && [ -n "$LDAP_BASE" ] && [ -n "$LDAP_BIND_DN" ] && [ -n "$LDAP_BIND_PWFILE" ] && [ -n "$1" ] || exit 1
 [ -r "$LDAP_BIND_PWFILE" ] || exit 1
 
-export LDAPTLS_CACERT="${LDAP_CACERT:-}"
 export LDAPTLS_REQCERT="${LDAP_REQCERT:-allow}"
 
 # Search ou=people for uid=$1, return sshPublicKey (openssh-lpk schema)
