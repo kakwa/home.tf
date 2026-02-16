@@ -14,11 +14,24 @@ bindpw {{ ssh_ldap_bind_password }}
 tls_cacertfile {{ ssh_ldap_tls_cacert }}
 tls_reqcert {{ ssh_ldap_tls_reqcert }}
 
-# Per-database base DN (ou=people, ou=groups)
+# Search base per map (global base above used if not set)
 base passwd {{ ssh_ldap_user_ou }}
 base group {{ ssh_ldap_group_ou }}
 base shadow {{ ssh_ldap_user_ou }}
 
-# posixAccount / posixGroup (default filters and maps)
-# filter passwd (objectClass=posixAccount)
-# filter group (objectClass=posixGroup)
+# Scope: onelevel = immediate children only (users/groups directly under the OU)
+scope passwd onelevel
+scope group onelevel
+scope shadow onelevel
+
+# Search filters (defaults are objectClass=posixAccount / posixGroup)
+filter passwd (objectClass=posixAccount)
+filter group (objectClass=posixGroup)
+filter shadow (objectClass=posixAccount)
+
+# RFC 2307 attribute mapping (passwd: posixAccount; group: posixGroup)
+# passwd: uid, uidNumber, gidNumber, gecos (cn), homeDirectory, loginShell; userPassword masked by default
+map    passwd gecos           cn
+# group: member (DN) kept as member; memberUid mapped to dummy (LDAP has no such attribute)
+map    group  member          member
+map    group  memberUid       x-internal-unused

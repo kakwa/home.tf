@@ -1,5 +1,6 @@
 ---
 # SSH + LDAP authentication: NSS/PAM and SSH keys from LDAP (openldap/openssh-lpk)
+# Uses pynslcd (Python nslcd) with libnss-ldapd/libpam-ldapd.
 # Use after openldap role on the same host, or set ldap_uri to the LDAP server FQDN.
 
 # LDAP connection (default: same as openldap role). Uses read-only technical account from openldap role.
