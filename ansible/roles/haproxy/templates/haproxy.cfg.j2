@@ -1,0 +1,43 @@
+# HAProxy configuration (managed by Ansible)
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    daemon
+
+defaults
+    log     global
+    mode    tcp
+    option  tcplog
+    option  dontlognull
+    timeout connect 5000
+    timeout client  50000
+    timeout server  50000
+
+# Kubernetes API gateway (TCP pass-through to control plane)
+{% if haproxy_k8s_api_servers | default([]) | length > 0 %}
+frontend k8s_api
+    bind {{ haproxy_k8s_api_bind }}
+    mode tcp
+    default_backend k8s_api_servers
+
+backend k8s_api_servers
+    mode tcp
+    balance roundrobin
+    option tcp-check
+{% for srv in haproxy_k8s_api_servers %}
+    server {{ srv.name }} {{ srv.address }}:{{ srv.port | default(6443) }} check
+{% endfor %}
+{% endif %}
+
+# Stats UI
+listen stats
+    mode http
+    bind *:8404
+    stats enable
+    stats uri /stats
+    stats refresh 30s

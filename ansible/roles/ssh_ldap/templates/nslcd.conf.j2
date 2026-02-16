@@ -4,14 +4,15 @@
 uid nslcd
 gid nslcd
 
+log {{ ssh_ldap_nslcd_log | default('syslog debug') }}
+
 uri {{ ssh_ldap_uri }}
 base {{ ssh_ldap_base_dn }}
 
 binddn {{ ssh_ldap_bind_dn }}
 bindpw {{ ssh_ldap_bind_password }}
 
-# TLS (self-signed CA or proper CA)
-tls_cacertfile {{ ssh_ldap_tls_cacert }}
+# TLS
 tls_reqcert {{ ssh_ldap_tls_reqcert }}
 
 # Search base per map (global base above used if not set)
@@ -32,6 +33,15 @@ filter shadow (objectClass=posixAccount)
 # RFC 2307 attribute mapping (passwd: posixAccount; group: posixGroup)
 # passwd: uid, uidNumber, gidNumber, gecos (cn), homeDirectory, loginShell; userPassword masked by default
 map    passwd gecos           cn
-# group: member (DN) kept as member; memberUid mapped to dummy (LDAP has no such attribute)
-map    group  member          member
-map    group  memberUid       x-internal-unused
+# group: member (DN) kept as member; memberUid mapped to member
+map    group  memberUid       member
+
+# Scope: onelevel = immediate children only (users/groups directly under the OU)
+scope passwd onelevel
+scope group onelevel
+scope shadow onelevel
+
+# Search filters (defaults are objectClass=posixAccount / posixGroup)
+filter passwd (objectClass=posixAccount)
+filter group (objectClass=posixGroup)
+filter shadow (objectClass=posixAccount)

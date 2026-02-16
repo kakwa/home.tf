@@ -1,0 +1,5 @@
+---
+# Static /etc/hosts entries: list of { ip: "...", name: "..." }
+hosts_entries:
+  - ip: 192.168.1.13
+    name: ldap.int.kakwalab.ovh

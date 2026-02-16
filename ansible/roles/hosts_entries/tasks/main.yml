@@ -1,0 +1,10 @@
+---
+- name: Ensure /etc/hosts entries exist
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^[^#]*\s+{{ item.name }}\s*$'
+    line: "{{ item.ip }} {{ item.name }}"
+    state: present
+  loop: "{{ hosts_entries }}"
+  loop_control:
+    label: "{{ item.ip }} {{ item.name }}"
