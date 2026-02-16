@@ -172,12 +172,7 @@
   changed_when: openldap_groupwithmember_add.rc == 0
   become: true
 
-- name: Add memberOf-user schema to cn=config
-  command: ldapadd -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/memberof-user.ldif
-  register: openldap_memberof_user_add
-  failed_when: false
-  changed_when: openldap_memberof_user_add.rc == 0
-  become: true
+# memberOf-user schema (userWithMemberOf only) is added after memberof overlay, to avoid duplicate memberOf attributeType.
 
 # cn=config is only reachable via ldapi EXTERNAL; LDAPS with cn=admin cannot query it (No such object).
 # When ldapi fails with "Confidentiality required" (rc 13) after TLS is applied, use default MDB DN.
@@ -192,6 +187,80 @@
   set_fact:
     openldap_mdb_dn: "{{ ((openldap_mdb_search.stdout | regex_findall('dn:\\s*(.+)')) + ['olcDatabase={1}mdb,cn=config'])[0] if openldap_mdb_search.rc == 0 else 'olcDatabase={1}mdb,cn=config' }}"
 
+# memberOf overlay requires the memberof module to be loaded (see https://tylersguides.com/guides/openldap-memberof-overlay/).
+# Without it, ldapadd of the overlay would fail; we load the module so the overlay can be applied.
+- name: Get module list DN and current olcModuleLoad from cn=config
+  command: ldapsearch -Y EXTERNAL -H ldapi:/// -b cn=config -LLL "(objectClass=olcModuleList)" dn olcModuleLoad
+  register: openldap_module_search
+  become: true
+  changed_when: false
+  failed_when: openldap_module_search.rc != 0 and openldap_module_search.rc != 32 and openldap_module_search.rc != 13
+  # rc 32 = No such object (no module list yet); rc 13 = Confidentiality required (TLS already applied, ldapi unusable)
+
+- name: Set module list DN for memberof (from ldapsearch or default)
+  set_fact:
+    openldap_module_dn: "{{ (openldap_module_search.stdout | regex_findall('dn:\\s*(.+)') | first) | default('cn=module{0},cn=config') | trim }}"
+  when:
+    - openldap_module_search.rc == 0
+    - openldap_module_search.stdout is defined
+    - "'memberof' not in openldap_module_search.stdout and 'memberof.la' not in openldap_module_search.stdout"
+
+# Load memberof module; use name without .la to match back_mdb style (slapd resolves to .so).
+- name: Create LDIF to add memberof to existing module list
+  copy:
+    content: |
+      dn: {{ openldap_module_dn }}
+      changetype: modify
+      add: olcModuleLoad
+      olcModuleLoad: memberof
+    dest: "{{ openldap_ldif_dir }}/memberof-module.ldif"
+    mode: "0600"
+  become: true
+  when:
+    - openldap_module_search.rc == 0
+    - openldap_module_search.stdout is defined
+    - "'memberof' not in openldap_module_search.stdout and 'memberof.la' not in openldap_module_search.stdout"
+    - openldap_module_dn is defined
+
+- name: Load memberof module (add to existing module list)
+  command: ldapmodify -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/memberof-module.ldif
+  register: openldap_memberof_module_add
+  become: true
+  notify: restart slapd
+  failed_when: false
+  changed_when: openldap_memberof_module_add.rc == 0
+  when:
+    - openldap_module_search.rc == 0
+    - openldap_module_search.stdout is defined
+    - "'memberof' not in openldap_module_search.stdout and 'memberof.la' not in openldap_module_search.stdout"
+  # If rc 80 (handler exited with 1): memberof may be built-in on this Debian; overlay add is still tried below.
+
+- name: Create LDIF to add new module list with memberof (no module list exists)
+  copy:
+    content: |
+      dn: cn=module,cn=config
+      objectClass: olcModuleList
+      cn: module
+      olcModulePath: /usr/lib/ldap
+      olcModuleLoad: memberof
+    dest: "{{ openldap_ldif_dir }}/memberof-module-new.ldif"
+    mode: "0600"
+  become: true
+  when: openldap_module_search.rc == 32 or (openldap_module_search.stdout is defined and openldap_module_search.stdout | trim == '')
+
+- name: Add new module list with memberof
+  command: ldapadd -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/memberof-module-new.ldif
+  register: openldap_memberof_module_new
+  become: true
+  notify: restart slapd
+  when: openldap_module_search.rc == 32 or (openldap_module_search.stdout is defined and openldap_module_search.stdout | trim == '')
+  failed_when: false
+  changed_when: openldap_memberof_module_new.rc == 0
+
+- name: Flush handlers so slapd restarts with memberof module before overlay add
+  meta: flush_handlers
+  when: (openldap_memberof_module_add is defined and openldap_memberof_module_add is changed) or (openldap_memberof_module_new is defined and openldap_memberof_module_new is changed)
+
 - name: Create memberof overlay LDIF
   copy:
     content: |
@@ -199,10 +268,10 @@
       objectClass: olcOverlayConfig
       objectClass: olcMemberOf
       olcOverlay: memberof
-      olcMemberOfGroupOC: posixGroup
+      olcMemberOfGroupOC: groupWithMember
       olcMemberOfMemberAD: member
       olcMemberOfMemberOfAD: memberOf
-      olcMemberOfRefInt: "TRUE"
+      olcMemberOfRefInt: TRUE
       olcMemberOfDangling: ignore
     dest: "{{ openldap_ldif_dir }}/memberof-overlay.ldif"
     mode: "0600"
@@ -211,8 +280,16 @@
 - name: Add memberof overlay to MDB database
   command: ldapadd -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/memberof-overlay.ldif
   register: openldap_memberof_overlay_add
-  failed_when: false
+  failed_when: openldap_memberof_overlay_add.rc != 0 and openldap_memberof_overlay_add.rc != 68 and openldap_memberof_overlay_add.rc != 13
   changed_when: openldap_memberof_overlay_add.rc == 0
+  become: true
+  # rc 68 = Already exists (idempotent); rc 13 = Confidentiality required (TLS on, overlay already added on first run)
+
+- name: Add memberOf-user schema to cn=config (userWithMemberOf; memberOf attr from overlay)
+  command: ldapadd -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/memberof-user.ldif
+  register: openldap_memberof_user_add
+  failed_when: false
+  changed_when: openldap_memberof_user_add.rc == 0
   become: true
 
 # PPolicy overlay: recognizes password-policy control 1.3.6.1.4.1.42.2.27.8.5.1 sent by nslcd,
@@ -410,7 +487,6 @@
       - organizationalPerson
       - inetOrgPerson
       - posixAccount
-      - userWithMemberOf
     attributes:
       uid: "{{ openldap_default_user_uid }}"
       cn: "{{ openldap_default_user_cn }}"
@@ -503,7 +579,7 @@
     and ((openldap_default_user_search.results | default([]) | length > 0)
          or (openldap_default_user_created is defined and openldap_default_user_created is changed))
 
-- name: Add default user (carpenti) to groups ssh-admins and ssh-users (SSH access)
+- name: Add default user (carpenti) to all role groups (ssh-admins, k8s-admins, ssh-users, k8s-users)
   community.general.ldap_attrs:
     dn: "cn={{ item }},ou=groups,{{ openldap_base_dn }}"
     state: present
@@ -514,9 +590,7 @@
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
-  loop:
-    - ssh-admins
-    - ssh-users
+  loop: "{{ openldap_role_groups }}"
   when: >
     openldap_default_user_create | default(false) | bool
     and ((openldap_default_user_search.results | default([]) | length > 0)
@@ -532,7 +606,7 @@
       objectClass: userWithMemberOf
     dest: "{{ openldap_ldif_dir }}/memberof-add-oc.ldif"
     mode: "0600"
-  when: openldap_default_user_create | default(false) | bool and (openldap_default_user_search.results | default([]) | length > 0)
+  when: openldap_default_user_create | default(false) | bool and ((openldap_default_user_search.results | default([]) | length > 0) or (openldap_default_user_created is defined and openldap_default_user_created is changed))
 
 - name: Ensure default user has userWithMemberOf for memberOf overlay
   command: >
@@ -545,7 +619,7 @@
   register: openldap_memberof_oc_add
   failed_when: false
   changed_when: openldap_memberof_oc_add.rc == 0
-  when: openldap_default_user_create | default(false) | bool and (openldap_default_user_search.results | default([]) | length > 0)
+  when: openldap_default_user_create | default(false) | bool and ((openldap_default_user_search.results | default([]) | length > 0) or (openldap_default_user_created is defined and openldap_default_user_created is changed))
 
 # Touch each group (replace cn with same value) so memberOf overlay updates memberOf on user entries.
 - name: Create LDIFs to touch groups (trigger memberOf overlay)
