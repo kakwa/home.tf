@@ -48,7 +48,3 @@ ssh_ldap_allowed_ssh_groups:
   - ssh-admins
   - ssh-users
   - sudo
-
-# Sudo: grant sudo to members of cn=ssh-admins (via /etc/sudoers.d/99-ssh-admins)
-ssh_ldap_sudoers_ssh_admins: true
-ssh_ldap_sudoers_spec: "ALL=(ALL) ALL"  # sudoers spec for ssh-admins

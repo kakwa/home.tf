@@ -160,3 +160,14 @@
     name: pynslcd
     state: started
     enabled: true
+
+# No-password sudo for LDAP group ssh-admins (resolved via NSS)
+- name: Deploy sudoers rule for group ssh-admins
+  copy:
+    content: |
+      # Members of group ssh-admins (LDAP) may run all commands without password
+      %ssh-admins ALL=(ALL) NOPASSWD: ALL
+    dest: /etc/sudoers.d/99-ssh-admins
+    owner: root
+    group: root
+    mode: "0440"
