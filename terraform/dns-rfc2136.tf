@@ -3,7 +3,6 @@
 # for_each keys are static so that IPs (known only after apply) can be used in values.
 
 locals {
-  dns_zone_fqdn = "${var.dns_zone}."
   dns_hosts     = merge(
     local.gateway_ips,
     { "utility" = local.utility_ip },
@@ -19,8 +18,8 @@ locals {
 }
 
 resource "dns_a_record_set" "cluster" {
-  for_each  = var.dns_update_server != "" ? local.dns_host_keys : {}
-  zone      = local.dns_zone_fqdn
+  for_each  = local.dns_host_keys
+  zone      = var.dns_zone
   name      = each.key
   addresses = [coalesce(lookup(local.dns_hosts, each.key, ""), "0.0.0.0")]
   ttl       = 300
@@ -28,7 +27,7 @@ resource "dns_a_record_set" "cluster" {
 
 resource "dns_a_record_set" "talos_k8s" {
   count     = var.dns_update_server != "" ? 1 : 0
-  zone      = local.dns_zone_fqdn
+  zone      = var.dns_zone
   name      = "talos-k8s"
   addresses = [var.control_plane_vip]
   ttl       = 300
@@ -36,10 +35,9 @@ resource "dns_a_record_set" "talos_k8s" {
 
 # CNAME ldap.int.kakwalab.ovh -> utility.int.kakwalab.ovh (ldapcherry on utility VM)
 resource "dns_cname_record" "ldap" {
-  count  = var.dns_update_server != "" ? 1 : 0
-  zone   = local.dns_zone_fqdn
+  zone   = var.dns_zone
   name   = "ldap"
-  cname  = "utility.${local.dns_zone_fqdn}"
+  cname  = "utility.${var.dns_zone}"
   ttl    = 300
 }
 
