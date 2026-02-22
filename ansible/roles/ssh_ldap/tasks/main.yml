@@ -39,7 +39,7 @@
     owner: root
     group: root
     mode: "0600"
-  notify: restart pynslcd
+  notify: clear nscd cache and restart pynslcd nscd
 
 - name: Deploy nsswitch.conf (NSS with LDAP)
   template:

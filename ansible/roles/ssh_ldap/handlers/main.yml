@@ -4,6 +4,21 @@
     name: pynslcd
     state: restarted
 
+- name: clear nscd cache and restart pynslcd nscd
+  block:
+    - name: Clear nscd cache
+      ansible.builtin.shell: "rm -f /var/cache/nscd/*"
+      args:
+        warn: false
+      changed_when: true
+
+    - name: Restart pynslcd and nscd
+      ansible.builtin.service:
+        name:
+          - pynslcd
+          - nscd
+        state: restarted
+
 - name: restart ssh
   service:
     name: ssh
