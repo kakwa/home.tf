@@ -4,7 +4,7 @@
 # Use after openldap role on the same host, or set ldap_uri to the LDAP server FQDN.
 
 # LDAP connection (default: same as openldap role when present; otherwise standalone, e.g. gateway → utility LDAP).
-ssh_ldap_uri: "ldaps://{{ openldap_fqdn | default('ldap.int.kakwalab.ovh') }}:636"
+ssh_ldap_uri: "ldaps://ldap.int.kakwalab.ovh:636"
 ssh_ldap_base_dn: "{{ openldap_base_dn | default('dc=kakwalab,dc=ovh') }}"
 ssh_ldap_bind_dn: "{{ openldap_ssh_ldap_readonly_dn | default('uid=ssh-ldap-readonly,ou=services,dc=kakwalab,dc=ovh') }}"
 ssh_ldap_bind_password: "{{ openldap_ssh_ldap_readonly_password | default('changeme-readonly') }}"
