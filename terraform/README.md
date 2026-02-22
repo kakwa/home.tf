@@ -14,21 +14,25 @@ tofu plan
 tofu apply
 ```
 
-## OVH DNS (optional)
+## Local DNS via RFC 2136 (optional)
 
-To manage DNS records under `int.kakwalab.ovh`, add `ovh.json` in this directory with your OVH API credentials:
+To manage DNS records under `int.kakwalab.ovh` with a local BIND (or other RFC 2136–capable) server, set TSIG credentials and server. Example `dns.auto.tfvars.json` (auto-loaded if present):
 
 ```json
-{"application_key":"","application_secret":"","consumer_key":"","ovh_endpoint":"ovh-eu"}
+{
+  "dns_update_server": "192.168.1.25",
+  "dns_update_port": 5353,
+  "dns_tsig_key_name": "sec1_key",
+  "dns_tsig_key_algorithm": "hmac-sha512",
+  "dns_tsig_key_secret": "<base64-secret>"
+}
 ```
 
-**Load by default:** create a symlink so OpenTofu auto-loads the file (no `-var-file` needed):
+The secret is the part after the second `:` in `nsupdate -y hmac-sha512:key_name:SECRET`. Zone is derived from `ovh_int_subdomain` and `ovh_zone` (e.g. `int` + `kakwalab.ovh` → `int.kakwalab.ovh`). Use a `*.auto.tfvars.json` filename so OpenTofu loads it automatically, or pass `-var-file=dns.auto.tfvars.json`.
 
-```bash
-ln -sf ovh.json ovh.auto.tfvars.json
-```
+**If you see** `"key_name", "key_secret" and "key_algorithm" should be non empty"`: ensure `dns_tsig_key_algorithm` is the algorithm name (e.g. `hmac-sha512`) and `dns_tsig_key_secret` is the base64 secret from your nsupdate key—not the other way around.
 
-Then `tofu apply` will use the credentials automatically. Otherwise run `tofu apply -var-file=ovh.json`.
+**If you see** `"key_name" should be fully-qualified"`: the provider expects a FQDN; the config now adds a trailing dot automatically (e.g. `sec1_key` → `sec1_key.`), so you can keep using the short name in your tfvars.
 
 # Troubleshooting
 

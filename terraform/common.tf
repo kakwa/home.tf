@@ -25,9 +25,9 @@ terraform {
       source  = "hashicorp/external"
       version = "~> 2.3"
     }
-    ovh = {
-      source  = "ovh/ovh"
-      version = "~> 0.36"
+    dns = {
+      source  = "hashicorp/dns"
+      version = "~> 3.4"
     }
   }
 }
@@ -36,10 +36,18 @@ provider "libvirt" {
   uri = "qemu:///system"
 }
 
-# OVH: credentials from var-file. Load by default: name file ovh.auto.tfvars.json (auto-loaded). Format: {"application_key":"","application_secret":"","consumer_key":"","ovh_endpoint":"ovh-eu"}
-provider "ovh" {
-  endpoint           = var.ovh_endpoint
-  application_key    = var.application_key
-  application_secret = var.application_secret
-  consumer_key       = var.consumer_key
+# Local DNS via RFC 2136 (e.g. BIND with TSIG). Zone updates use HMAC-SHA512.
+# Set dns_update_server, dns_tsig_key_name, dns_tsig_key_secret (e.g. via dns.auto.tfvars.json).
+# When dns_update_server is empty, no update block is set and DNS resources are skipped.
+provider "dns" {
+  dynamic "update" {
+    for_each = var.dns_update_server != "" ? [1] : []
+    content {
+      server        = var.dns_update_server
+      port          = var.dns_update_port
+      key_name      = var.dns_tsig_key_name != "" && !endswith(var.dns_tsig_key_name, ".") ? "${var.dns_tsig_key_name}." : var.dns_tsig_key_name
+      key_algorithm = var.dns_tsig_key_algorithm
+      key_secret    = var.dns_tsig_key_secret
+    }
+  }
 }
