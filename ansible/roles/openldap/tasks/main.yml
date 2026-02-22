@@ -29,6 +29,7 @@
       - slapd
       - ldap-utils
       - gnutls-bin
+      - python3-ldap
     state: present
     update_cache: true
   when: "'slapd' not in ansible_facts.packages"
