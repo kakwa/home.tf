@@ -82,7 +82,7 @@ ${local.debian_sudoers_cloudinit}
         gateway4: 192.168.1.254
         nameservers:
           addresses:
-            - 8.8.8.8
+            - 192.168.1.25
       enp2s0:
         dhcp4: true
   EOF

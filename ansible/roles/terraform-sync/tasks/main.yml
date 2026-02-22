@@ -17,6 +17,7 @@
       - --exclude=*.tfstate
       - --exclude=*.tfstate.*
       - --exclude=ovh.json
+      - --exclude=dns.auto.tfvars.json
       - --exclude=talos-env.sh
       - --exclude=inventory.yml
       - --exclude=ovh.auto.tfvars.json

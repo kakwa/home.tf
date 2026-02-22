@@ -95,7 +95,7 @@ variable "utility_static_ip" {
 }
 
 variable "control_plane_vip" {
-  description = "Virtual IP for the Talos/Kubernetes control plane API (e.g. 192.168.100.10); used in talos-env.sh and OVH DNS talos-k8s record"
+  description = "Virtual IP for the Talos/Kubernetes control plane API (e.g. 192.168.100.10); used in talos-env.sh and RFC 2136 DNS talos-k8s record"
   type        = string
   default     = "192.168.100.10"
 }
@@ -132,43 +132,42 @@ variable "vm_spice_port_base" {
   default     = 5900
 }
 
-# OVH credentials. For automatic loading, name the file ovh.auto.tfvars.json (same format; *.auto.tfvars.json is loaded by default).
-# Format: {"application_key":"","application_secret":"","consumer_key":"","ovh_endpoint":"ovh-eu"} (ovh_endpoint optional)
-variable "application_key" {
-  description = "OVH API application key"
+# RFC 2136 DNS update (local BIND, etc.). For auto-load use dns.auto.tfvars.json.
+variable "dns_update_server" {
+  description = "DNS server for RFC 2136 updates"
+  type        = string
+  default     = ""
+}
+
+variable "dns_update_port" {
+  description = "Port for RFC 2136 updates (e.g. 5353 for unprivileged BIND)"
+  type        = number
+  default     = 5353
+}
+
+variable "dns_tsig_key_name" {
+  description = "TSIG key name for RFC 2136 (e.g. sec1_key); a trailing dot is added if missing (required by provider)"
   type        = string
   default     = ""
   sensitive   = true
 }
 
-variable "application_secret" {
-  description = "OVH API application secret"
+variable "dns_tsig_key_algorithm" {
+  description = "TSIG algorithm (e.g. hmac-sha512)"
+  type        = string
+  default     = "hmac-sha512"
+}
+
+variable "dns_tsig_key_secret" {
+  description = "TSIG key secret (base64). From nsupdate -y hmac-sha512:key_name:secret"
   type        = string
   default     = ""
   sensitive   = true
 }
 
-variable "consumer_key" {
-  description = "OVH API consumer key"
+# Zone naming (used for record FQDNs and RFC 2136 zone)
+variable "dns_zone" {
+  description = "DNS zone for cluster names (e.g. kakwalab.ovh)"
   type        = string
-  default     = ""
-  sensitive   = true
-}
-
-variable "ovh_endpoint" {
-  description = "OVH API endpoint (ovh-eu, ovh-ca, ovh-us)"
-  type        = string
-  default     = "ovh-eu"
-}
-
-variable "ovh_zone" {
-  description = "OVH DNS zone for cluster public names (e.g. kakwalab.ovh)"
-  type        = string
-  default     = "kakwalab.ovh"
-}
-
-variable "ovh_int_subdomain" {
-  description = "Subdomain under zone for cluster hosts (e.g. int -> gateway-1.int.kakwalab.ovh)"
-  type        = string
-  default     = "int"
+  default     = "int.kakwalab.ovh"
 }
