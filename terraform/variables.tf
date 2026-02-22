@@ -169,5 +169,5 @@ variable "dns_tsig_key_secret" {
 variable "dns_zone" {
   description = "DNS zone for cluster names (e.g. kakwalab.ovh)"
   type        = string
-  default     = "int.kakwalab.ovh"
+  default     = "int.kakwalab.ovh."
 }
