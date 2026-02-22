@@ -3,17 +3,25 @@
 # for_each keys are static so that IPs (known only after apply) can be used in values.
 
 locals {
-  dns_hosts     = merge(
-    local.gateway_ips,
-    { "utility" = local.utility_ip },
-    local.talos_cp_ips,
-    local.talos_worker_ips
+  # Static records from variables (no -k8s): gateway-1, gateway-2, utility.
+  dns_hosts_static = merge(
+    { for k, v in var.gateway_static_ips : k => replace(v, "/24", "") },
+    { "utility" = replace(var.utility_static_ip, "/24", "") }
+  )
+  # All DNS hosts: static (above) + -k8s suffixed (gateway, utility, talos cp/workers).
+  dns_hosts = merge(
+    local.dns_hosts_static,
+    { for k, v in local.gateway_ips : "${k}-k8s" => v },
+    { "utility-k8s" = local.utility_ip },
+    { for k, v in local.talos_cp_ips : "${k}-k8s" => v },
+    { for k, v in local.talos_worker_ips : "${k}-k8s" => v }
   )
   dns_host_keys = setunion(
-    keys(var.gateway_static_ips),
-    ["utility"],
-    keys(local.control_plane_nodes),
-    keys(local.worker_nodes)
+    keys(local.dns_hosts_static),
+    toset([for k in keys(local.gateway_ips) : "${k}-k8s"]),
+    toset(["utility-k8s"]),
+    toset([for k in keys(local.control_plane_nodes) : "${k}-k8s"]),
+    toset([for k in keys(local.worker_nodes) : "${k}-k8s"])
   )
 }
 
