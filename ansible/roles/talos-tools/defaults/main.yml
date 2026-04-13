@@ -4,3 +4,4 @@ talos_tools_packages:
   - genisoimage
   - tofu
   - talosctl
+  - helm
