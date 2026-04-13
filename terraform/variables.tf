@@ -25,7 +25,7 @@ variable "cloudinit_storage_pool_name" {
 variable "talos_version" {
   description = "Talos version to use"
   type        = string
-  default     = "v1.12.3"
+  default     = "v1.12.6"
 }
 
 variable "talos_extensions" {
