@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
+# Talos bootstrap and kubeconfig. All generated files live under K8S_DIR (default /opt/home.tf/k8s).
+# Override: K8S_DIR=/path/to/k8s ./init-talos.sh
 set -euo pipefail
 
+K8S_DIR="${K8S_DIR:-/opt/home.tf/k8s}"
+mkdir -p "${K8S_DIR}"
+cd "${K8S_DIR}"
+
+if [[ ! -r ./talos-env.sh ]]; then
+  echo "error: ${K8S_DIR}/talos-env.sh not found (run tofu apply; check k8s_config_dir)." >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
 source ./talos-env.sh
 
 CLUSTER_NAME="kawkalab-talos-cluster"
 BOOTSTRAP_CP="${CONTROL_PLANE_IP[0]}"
 TEMP_ENDPOINT="https://${BOOTSTRAP_CP}:6443"
-export TALOSCONFIG=./talosconfig
+export TALOSCONFIG="${K8S_DIR}/talosconfig"
 
 ########################################
 # Detect re-run: already bootstrapped?
@@ -155,7 +166,7 @@ echo "========================================"
 echo " VIP Enabled Successfully"
 echo "========================================"
 echo "Set kubeconfig and test:"
-echo "  export KUBECONFIG=\$(pwd)/kubeconfig"
+echo "  export KUBECONFIG=${K8S_DIR}/kubeconfig"
 echo "  kubectl get nodes"
 echo "Verify VIP:"
 echo "  ping ${CONTROL_PLANE_VIP}"

@@ -1,15 +1,9 @@
 # Generate Ansible inventory from Terraform VM definitions.
 # IPs from libvirt provider (domain interface addresses) when VMs are running;
-# fallback to virsh domifaddr (external script) then static (gateways + utility only).
+# fallback to virsh domifaddr (external script) then static (utility only).
 
 # Provider-based IP discovery (same source as virsh domifaddr --source agent when source = "agent").
 # Use domain name (not id): libvirt looks up by UUID or name; provider .id can be numeric domain id.
-data "libvirt_domain_interface_addresses" "gateway" {
-  for_each = local.gateway_vms
-  domain   = libvirt_domain.gateway[each.key].name
-  source   = "any"
-}
-
 data "libvirt_domain_interface_addresses" "utility" {
   domain = libvirt_domain.utility.name
   source = "any"
@@ -29,19 +23,11 @@ data "libvirt_domain_interface_addresses" "workers" {
 
 locals {
   inventory_domain_names = concat(
-    keys(local.gateway_vms),
     ["utility"],
     keys(local.control_plane_nodes),
     keys(local.worker_nodes)
   )
   # First non-loopback IPv4 from first interface (provider); fallback to first addr.
-  provider_gateway_ips = {
-    for k in keys(local.gateway_vms) :
-    k => try(
-      [for a in data.libvirt_domain_interface_addresses.gateway[k].interfaces[0].addrs : a.addr if substr(coalesce(a.addr, ""), 1, 4) != "127."][0],
-      try(data.libvirt_domain_interface_addresses.gateway[k].interfaces[0].addrs[0].addr, "")
-    )
-  }
   provider_utility_ip = try(
     [for a in data.libvirt_domain_interface_addresses.utility.interfaces[0].addrs : a.addr if substr(coalesce(a.addr, ""), 1, 4) != "127."][0],
     try(data.libvirt_domain_interface_addresses.utility.interfaces[0].addrs[0].addr, "")
@@ -56,11 +42,7 @@ locals {
   }
   # Discovered IPs from virsh domifaddr (fallback when provider has no IP, e.g. VM not running during apply)
   discovered_ips = data.external.domain_ips.result
-  # Resolved: provider first, then virsh, then static (gateways + utility only)
-  gateway_ips = {
-    for k, v in var.gateway_static_ips :
-    k => coalesce(lookup(local.provider_gateway_ips, k, ""), lookup(local.discovered_ips, k, ""), replace(v, "/24", ""))
-  }
+  # Resolved: provider first, then virsh, then static (utility only)
   utility_ip = coalesce(local.provider_utility_ip, lookup(local.discovered_ips, "utility", ""), replace(var.utility_static_ip, "/24", ""))
   talos_cp_ips = {
     for k in keys(local.control_plane_nodes) :
@@ -73,6 +55,9 @@ locals {
   # Ordered lists for env file (cp-1, cp-2, cp-3 and worker-1..worker-6)
   control_plane_ips_list = [for k in sort(keys(local.control_plane_nodes)) : lookup(local.talos_cp_ips, k, "")]
   worker_ips_list        = [for k in sort(keys(local.worker_nodes)) : lookup(local.talos_worker_ips, k, "")]
+  # POSIX sh single-quote escaping for talos-env.sh (TSIG name/secret may contain ')
+  env_dns_tsig_key_secret_sq = replace(var.dns_tsig_key_secret, "'", "'\\''")
+  env_dns_tsig_key_name_sq   = replace(var.dns_tsig_key_name, "'", "'\\''")
 }
 
 data "external" "domain_ips" {
@@ -84,7 +69,6 @@ data "external" "domain_ips" {
 
 resource "local_file" "inventory" {
   content = templatefile("${path.module}/inventory.yml.tpl", {
-    gateway_ips         = local.gateway_ips
     utility_ip          = local.utility_ip
     control_plane_nodes = local.control_plane_nodes
     worker_nodes        = local.worker_nodes
@@ -97,11 +81,19 @@ resource "local_file" "inventory" {
 }
 
 resource "local_file" "env" {
+  depends_on = [null_resource.k8s_config_dir]
+
   content = templatefile("${path.module}/env.tpl", {
-    control_plane_ips = local.control_plane_ips_list
-    worker_ips        = local.worker_ips_list
-    control_plane_vip = var.control_plane_vip
+    control_plane_ips      = local.control_plane_ips_list
+    worker_ips             = local.worker_ips_list
+    control_plane_vip      = var.control_plane_vip
+    dns_update_server      = var.dns_update_server
+    dns_update_port        = var.dns_update_port
+    dns_zone               = var.dns_zone
+    dns_tsig_key_name_sq   = local.env_dns_tsig_key_name_sq
+    dns_tsig_key_secret_sq = local.env_dns_tsig_key_secret_sq
+    dns_tsig_key_algorithm = var.dns_tsig_key_algorithm
   })
-  filename        = "${path.module}/talos-env.sh"
+  filename        = "${var.k8s_config_dir}/talos-env.sh"
   file_permission = "0644"
 }

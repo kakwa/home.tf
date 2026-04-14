@@ -79,19 +79,36 @@ variable "bridge_manage_netplan" {
   default     = true
 }
 
-variable "gateway_static_ips" {
-  description = "Static IPs for gateway VMs on bridge-network (CIDR, e.g. 192.168.1.11/24)"
-  type        = map(string)
-  default = {
-    "gateway-1" = "192.168.1.11/24"
-    "gateway-2" = "192.168.1.12/24"
-  }
+variable "metallb_ip_pool" {
+  description = "MetalLB IPAddressPool entry (CIDR or range), e.g. 192.168.1.48/28. L2 mode: client LAN must be L2-adjacent to nodes that run MetalLB speaker (or use routed alternatives)."
+  type        = string
+  default     = "192.168.1.48/28"
 }
 
 variable "utility_static_ip" {
   description = "Static IP for utility VM on bridge-network (CIDR, e.g. 192.168.1.13/24)"
   type        = string
   default     = "192.168.1.13/24"
+}
+
+# Keys must match worker VM names (talos-worker-1 …). Libvirt attaches host bridge (var.bridge_name) as 2nd NIC; Talos still uses 1st NIC (talos-network) for cluster by default — apply patches from talos-worker-lan.examples.yaml for LAN IPs.
+variable "worker_lan_static_ips" {
+  description = "Static CIDRs on 192.168.1.0/24 for each worker’s bridge NIC (2nd virtio). Apply via generated talos-worker-lan.examples.yaml (interface name may be eth1 — verify with talosctl get links)."
+  type        = map(string)
+  default = {
+    "talos-worker-1" = "192.168.1.41/24"
+    "talos-worker-2" = "192.168.1.42/24"
+    "talos-worker-3" = "192.168.1.43/24"
+    "talos-worker-4" = "192.168.1.44/24"
+    "talos-worker-5" = "192.168.1.45/24"
+    "talos-worker-6" = "192.168.1.46/24"
+  }
+}
+
+variable "k8s_config_dir" {
+  description = "Directory for Talos/Kubernetes outputs: talos-env.sh, external-dns-helm-values.yaml, and files created by init-talos.sh (kubeconfig, talosconfig, controlplane.yaml, worker.yaml). Override for non-hypervisor tofu apply (e.g. TF_VAR_k8s_config_dir=$PWD/k8s)."
+  type        = string
+  default     = "/opt/home.tf/k8s"
 }
 
 variable "control_plane_vip" {
@@ -101,7 +118,7 @@ variable "control_plane_vip" {
 }
 
 variable "debian_admin_user" {
-  description = "Admin username for Debian VMs (gateway, utility); created via cloud-init with sudo"
+  description = "Admin username for Debian VMs (utility); created via cloud-init with sudo"
   type        = string
   default     = "kakwa"
 }
@@ -127,7 +144,7 @@ variable "vm_spice_listen" {
 }
 
 variable "vm_spice_port_base" {
-  description = "Base port for SPICE (each VM gets a unique port: control-plane 5900+, workers 5910+, gateway 5920+, utility 5930)"
+  description = "Base port for SPICE (each VM gets a unique port: control-plane 5900+, workers 5910+, utility 5930)"
   type        = number
   default     = 5900
 }
@@ -171,3 +188,47 @@ variable "dns_zone" {
   type        = string
   default     = "int.kakwalab.ovh."
 }
+
+# external-dns-helm-values.yaml (for init-external-dns.sh)
+variable "external_dns_txt_owner_id" {
+  description = "TXT registry owner id for ExternalDNS"
+  type        = string
+  default     = "talos-home-tf"
+}
+
+variable "external_dns_policy" {
+  description = "ExternalDNS policy in generated Helm values (upsert-only avoids BIND AXFR)"
+  type        = string
+  default     = "upsert-only"
+}
+
+variable "external_dns_sources" {
+  description = "ExternalDNS sources in generated Helm values"
+  type        = list(string)
+  default     = ["service", "ingress"]
+}
+
+# Traefik (init-traefik.sh) — in-cluster ingress controller
+variable "traefik_service_type" {
+  description = "Kubernetes Service type for Traefik (LoadBalancer uses MetalLB from init-traefik.sh; NodePort skips MetalLB VIPs)"
+  type        = string
+  default     = "LoadBalancer"
+
+  validation {
+    condition     = contains(["NodePort", "LoadBalancer", "ClusterIP"], var.traefik_service_type)
+    error_message = "traefik_service_type must be NodePort, LoadBalancer, or ClusterIP."
+  }
+}
+
+variable "traefik_web_node_port" {
+  description = "HTTP NodePort when traefik_service_type is NodePort (must be in 30000-32767)"
+  type        = number
+  default     = 30080
+}
+
+variable "traefik_websecure_node_port" {
+  description = "HTTPS NodePort when traefik_service_type is NodePort"
+  type        = number
+  default     = 30443
+}
+
