@@ -14,8 +14,9 @@ resource "local_file" "talos_worker_lan_examples" {
   depends_on = [null_resource.k8s_config_dir]
 
   content = templatefile("${path.module}/templates/talos-worker-lan.examples.yaml.tpl", {
-    worker_name_list = sort(keys(local.worker_nodes))
-    worker_lan_ips   = var.worker_lan_static_ips
+    worker_name_list       = sort(keys(local.worker_nodes))
+    worker_lan_ips         = var.worker_lan_static_ips
+    cluster_network_cidr   = var.network_cidr
   })
   filename        = "${var.k8s_config_dir}/talos-worker-lan.examples.yaml"
   file_permission = "0644"
