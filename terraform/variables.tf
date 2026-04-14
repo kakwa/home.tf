@@ -79,10 +79,28 @@ variable "bridge_manage_netplan" {
   default     = true
 }
 
+variable "metallb_namespace" {
+  description = "Kubernetes namespace for MetalLB (PSA privileged; must match init-traefik METALLB_NAMESPACE)"
+  type        = string
+  default     = "metallb-system"
+}
+
 variable "metallb_ip_pool" {
   description = "MetalLB IPAddressPool entry (CIDR or range), e.g. 192.168.1.48/28. L2 mode: client LAN must be L2-adjacent to nodes that run MetalLB speaker (or use routed alternatives)."
   type        = string
   default     = "192.168.1.48/28"
+}
+
+variable "metallb_l2_interfaces" {
+  description = "MetalLB L2Advertisement interfaces (e.g. [\"eth1\"] for the libvirt bridge when the pool is 192.168.1.x and the cluster NIC is 192.168.100.x). Empty = announce from all interfaces. Helps avoid speaker using 192.168.100.x as source and netlink route EEXIST errors."
+  type        = list(string)
+  default     = []
+}
+
+variable "metallb_l2_workers_only" {
+  description = "If true and metallb_l2_interfaces is non-empty, limit L2Advertisement to nodes without control-plane/master roles (this repo’s control planes use a single NIC; workers have the LAN bridge)."
+  type        = bool
+  default     = false
 }
 
 variable "utility_static_ip" {
@@ -209,6 +227,12 @@ variable "external_dns_sources" {
 }
 
 # Traefik (init-traefik.sh) — in-cluster ingress controller
+variable "traefik_namespace" {
+  description = "Kubernetes namespace for Traefik (PSA baseline; must match init-traefik TRAEFIK_NAMESPACE)"
+  type        = string
+  default     = "traefik"
+}
+
 variable "traefik_service_type" {
   description = "Kubernetes Service type for Traefik (LoadBalancer uses MetalLB from init-traefik.sh; NodePort skips MetalLB VIPs)"
   type        = string

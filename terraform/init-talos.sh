@@ -45,10 +45,23 @@ echo "========================================"
 ########################################
 # Generate config (temporary endpoint)
 ########################################
+KUBELET_NODEIP_PATCH="${K8S_DIR}/talos-kubelet-nodeip-patch.yaml"
+GEN_CONFIG_EXTRA=()
+if [[ -f "${KUBELET_NODEIP_PATCH}" ]]; then
+  GEN_CONFIG_EXTRA=( --config-patch @"${KUBELET_NODEIP_PATCH}" )
+  echo "Talos gen config will merge: ${KUBELET_NODEIP_PATCH}"
+else
+  echo "Note: ${KUBELET_NODEIP_PATCH} not found (run tofu apply). Gen config omits kubelet nodeIP patch."
+fi
+
 if [[ -f controlplane.yaml && -f worker.yaml && -f talosconfig ]]; then
   echo "Config files (controlplane.yaml, worker.yaml, talosconfig) exist; skipping gen config."
+  if [[ "${#GEN_CONFIG_EXTRA[@]}" -gt 0 ]]; then
+    echo "If this cluster predates talos-kubelet-nodeip-patch.yaml, either regenerate configs (backup secrets) or:"
+    echo "  talosctl patch machineconfig --nodes <each-node-ip> --patch-file ${KUBELET_NODEIP_PATCH}"
+  fi
 else
-  talosctl gen config "${CLUSTER_NAME}" "${TEMP_ENDPOINT}"
+  talosctl gen config "${CLUSTER_NAME}" "${TEMP_ENDPOINT}" "${GEN_CONFIG_EXTRA[@]}"
 fi
 
 ########################################

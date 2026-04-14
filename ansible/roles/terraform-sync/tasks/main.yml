@@ -33,6 +33,8 @@
       - --exclude=talosconfig
       - --exclude=traefik-helm-values.yaml
       - --exclude=metallb-lan.yaml
+      - --exclude=metallb-namespace.yaml
+      - --exclude=traefik-namespace.yaml
       - --exclude=talos-worker-lan.examples.yaml
 
 - name: Ensure root .bashrc exists before adding cdtf alias
