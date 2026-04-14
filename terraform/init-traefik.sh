@@ -108,7 +108,7 @@ echo "========================================"
 # PSA baseline: satisfies seccomp defaults vs cluster restricted mode (Talos).
 kubectl apply -f "$TRAEFIK_NS_MANIFEST"
 
-helm repo add traefik https://traefik.github.io/traefik-helm-chart --force-update
+helm repo add traefik https://traefik.github.io/traefik-helm-chart --force-update || true
 helm repo update traefik
 
 if [ -n "${TRAEFIK_CHART_VERSION:-}" ]; then
