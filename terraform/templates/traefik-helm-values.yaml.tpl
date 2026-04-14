@@ -20,6 +20,9 @@ providers:
     enabled: true
   kubernetesIngress:
     enabled: true
+    # Fill Ingress status.loadBalancer so ExternalDNS (and clients) see the Traefik LB IP/hostname.
+    publishedService:
+      enabled: true
 
 deployment:
   replicas: 1
