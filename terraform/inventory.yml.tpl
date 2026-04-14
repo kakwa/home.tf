@@ -3,13 +3,6 @@
 
 all:
   children:
-    gateways:
-      hosts:
-%{ for name, ip in gateway_ips ~}
-        ${name}:
-          ansible_host: ${ip}
-%{ endfor ~}
-
     utility:
       hosts:
         utility:
@@ -17,7 +10,6 @@ all:
 
     debian:
       children:
-        gateways:
         utility:
 
     talos_control_plane:

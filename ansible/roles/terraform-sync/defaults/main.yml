@@ -4,5 +4,8 @@
 # Destination directory on the hypervisor (must be set; used for sync and cdtf alias)
 terraform_sync_dest: /opt/home.tf/terraform
 
+# Talos / k8s generated config (talos-env.sh, kubeconfig, etc.); created before sync
+terraform_k8s_config_dir: /opt/home.tf/k8s
+
 # Path to terraform directory on the controller (set by playbook, e.g. "{{ playbook_dir }}/../terraform")
 # terraform_sync_src is required and should be passed when including the role

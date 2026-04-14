@@ -119,6 +119,7 @@ resource "libvirt_domain" "workers" {
         }
       ] : []
     )
+    # Talos / cluster traffic: libvirt NAT (192.168.100.0/24). LAN / MetalLB: host bridge (same as utility VM, var.bridge_name).
     interfaces = [
       {
         type  = "network"
@@ -129,6 +130,11 @@ resource "libvirt_domain" "workers" {
           }
         }
         wait_for_ip = { timeout = 300, source = "any" }
+      },
+      {
+        type   = "bridge"
+        model  = { type = "virtio" }
+        source = { bridge = { bridge = var.bridge_name } }
       }
     ]
     consoles = [

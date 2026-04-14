@@ -7,6 +7,14 @@
     group: root
     mode: '0755'
 
+- name: Ensure k8s config directory exists (tofu outputs and init-talos / init-external-dns / init-traefik)
+  file:
+    path: "{{ terraform_k8s_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
 - name: Sync terraform directory to hypervisor
   ansible.posix.synchronize:
     src: "{{ terraform_sync_src }}/"
@@ -18,13 +26,14 @@
       - --exclude=*.tfstate.*
       - --exclude=ovh.json
       - --exclude=dns.auto.tfvars.json
-      - --exclude=talos-env.sh
       - --exclude=inventory.yml
       - --exclude=ovh.auto.tfvars.json
       - --exclude=worker.yaml
       - --exclude=controlplane.yaml
       - --exclude=talosconfig
-      - --exclude=kubeconfig
+      - --exclude=traefik-helm-values.yaml
+      - --exclude=metallb-lan.yaml
+      - --exclude=talos-worker-lan.examples.yaml
 
 - name: Ensure root .bashrc exists before adding cdtf alias
   file:
