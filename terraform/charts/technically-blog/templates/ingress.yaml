@@ -1,0 +1,27 @@
+{{- if and .Values.ingress.enabled .Values.ingress.host }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: {{ .Values.ingress.host | quote }}
+    {{- if eq .Values.ingress.upstreamScheme "https" }}
+    traefik.ingress.kubernetes.io/service.scheme: "https"
+    {{- end }}
+    {{- if .Values.ingress.upstreamInsecureSkipVerify }}
+    traefik.ingress.kubernetes.io/service.serverstransport: {{ include "technically-blog.serversTransportRef" . | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}
