@@ -30,8 +30,9 @@ ldapcherry_nginx_enable: true
 ldapcherry_nginx_server_name: "ldap.int.{{ openldap_domain | default('kakwalab.ovh') }}"
 ldapcherry_nginx_listen_port: 80
 
-# Nginx SSL (self-signed certificates)
+# Nginx SSL (self-signed unless ldapcherry_nginx_ssl_letsencrypt + certbot_letsencrypt role)
 ldapcherry_nginx_ssl_enable: true
+ldapcherry_nginx_ssl_letsencrypt: false
 ldapcherry_nginx_ssl_port: 443
 ldapcherry_nginx_ssl_cert_dir: "/etc/nginx/ssl/ldapcherry"
 ldapcherry_nginx_ssl_cert: "{{ ldapcherry_nginx_ssl_cert_dir }}/cert.pem"

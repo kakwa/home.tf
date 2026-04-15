@@ -1,0 +1,121 @@
+---
+# Certbot in a venv + OVH DNS plugin; renewal via cron; deploy hook reloads nginx and restarts slapd.
+- name: Certbot Let's Encrypt (OVH dns-01)
+  when: certbot_letsencrypt_enable | default(false) | bool
+  block:
+    - name: Require ACME email, OVH API credentials, and domain list
+      assert:
+        that:
+          - certbot_letsencrypt_email | length > 0
+          - certbot_letsencrypt_ovh_application_key | length > 0
+          - certbot_letsencrypt_ovh_application_secret | length > 0
+          - certbot_letsencrypt_ovh_consumer_key | length > 0
+          - certbot_letsencrypt_cert_name | length > 0
+          - certbot_letsencrypt_domains | length > 0
+          - certbot_letsencrypt_cert_name in certbot_letsencrypt_domains
+        fail_msg: >-
+          Set certbot_letsencrypt_email, certbot_letsencrypt_cert_name, certbot_letsencrypt_domains (SAN set),
+          and certbot_letsencrypt_ovh_* (see utility.yml / vault).
+
+    - name: Install Python tooling, cron, and pip for Certbot virtualenv
+      apt:
+        name:
+          - python3-venv
+          - python3-pip
+          - cron
+        state: present
+        update_cache: true
+
+    - name: Install Certbot and OVH DNS plugin (pip virtualenv)
+      pip:
+        name:
+          - certbot>=2.6
+          - certbot-dns-ovh
+        state: present
+        virtualenv: "{{ certbot_letsencrypt_certbot_venv }}"
+        virtualenv_command: python3 -m venv
+
+    - name: Stop and disable legacy Certbot renew systemd timer
+      systemd:
+        name: certbot-renew-docker-registry.timer
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: Remove legacy Certbot renew systemd unit files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/certbot-renew-docker-registry.timer
+        - /etc/systemd/system/certbot-renew-docker-registry.service
+
+    - name: Remove legacy renewal hooks (replaced by deploy hook below)
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/letsencrypt/renewal-hooks/deploy/50-docker-registry-nginx-reload.sh
+        - /etc/letsencrypt/renewal-hooks/deploy/50-utility-letsencrypt-services.sh
+
+    - name: Reload systemd after removing legacy Certbot renew units
+      systemd:
+        daemon_reload: true
+
+    - name: Deploy Certbot OVH credentials
+      template:
+        src: certbot-dns-ovh.ini.j2
+        dest: /etc/letsencrypt/ansible-dns-ovh.ini
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Reload nginx and restart slapd after successful certificate renewal
+      copy:
+        dest: /etc/letsencrypt/renewal-hooks/deploy/50-certbot-letsencrypt-services.sh
+        content: |
+          #!/bin/sh
+          set -e
+          systemctl reload nginx 2>/dev/null || true
+          systemctl restart slapd 2>/dev/null || true
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Schedule weekly Certbot renew from virtualenv
+      cron:
+        name: certbot_letsencrypt_renew
+        user: root
+        job: "{{ certbot_letsencrypt_certbot_venv }}/bin/certbot renew -q"
+        weekday: "1"
+        hour: "4"
+        minute: "7"
+
+    - name: Ensure cron daemon is running
+      service:
+        name: cron
+        state: started
+        enabled: true
+
+    - name: Stat Let's Encrypt certificate if already issued
+      stat:
+        path: "/etc/letsencrypt/live/{{ certbot_letsencrypt_cert_name }}/fullchain.pem"
+      register: certbot_le_fullchain
+
+    - name: Order Certbot -d flags (live directory follows first -d)
+      set_fact:
+        certbot_letsencrypt_certbot_domains: "{{ [certbot_letsencrypt_cert_name] + (certbot_letsencrypt_domains | reject('equalto', certbot_letsencrypt_cert_name) | list) }}"
+
+    - name: Run certbot certonly when certificate is absent
+      command: >-
+        {{ certbot_letsencrypt_certbot_venv }}/bin/certbot certonly --non-interactive --agree-tos --expand
+        --cert-name {{ certbot_letsencrypt_cert_name }}
+        --email {{ certbot_letsencrypt_email }}
+        --authenticator dns-ovh
+        --dns-ovh-credentials /etc/letsencrypt/ansible-dns-ovh.ini
+        --dns-ovh-propagation-seconds 120
+        {% for d in certbot_letsencrypt_certbot_domains %}-d {{ d }} {% endfor %}
+      register: certbot_le_obtain
+      changed_when: certbot_le_obtain.stdout | default('') | regex_search('Successfully received certificate|Certificate is saved at|Your certificate and chain have been saved|Renewing an existing certificate') is not none
+      when: not certbot_le_fullchain.stat.exists | default(false)

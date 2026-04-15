@@ -50,6 +50,34 @@
     owner: root
     group: openldap
 
+- name: Use Let's Encrypt paths for LDAP TLS (shared utility certificate)
+  when: openldap_tls_letsencrypt | default(false) | bool
+  block:
+    - name: Require certbot_letsencrypt_cert_name for OpenLDAP TLS
+      assert:
+        that:
+          - certbot_letsencrypt_cert_name | default('') | length > 0
+        fail_msg: Run the certbot_letsencrypt role first and set certbot_letsencrypt_cert_name (see utility.yml).
+
+    - name: Point OpenLDAP cn=config TLS at Let's Encrypt files
+      set_fact:
+        openldap_ca_cert: "/etc/letsencrypt/live/{{ certbot_letsencrypt_cert_name }}/chain.pem"
+        openldap_server_cert: "/etc/letsencrypt/live/{{ certbot_letsencrypt_cert_name }}/fullchain.pem"
+        openldap_server_key: "/etc/letsencrypt/live/{{ certbot_letsencrypt_cert_name }}/privkey.pem"
+
+    - name: Stat Let's Encrypt chain before configuring slapd
+      stat:
+        path: "{{ openldap_ca_cert }}"
+      register: openldap_le_chain_stat
+      failed_when: not openldap_le_chain_stat.stat.exists
+
+    - name: Allow slapd to read Let's Encrypt private key
+      file:
+        path: "{{ openldap_server_key }}"
+        owner: root
+        group: openldap
+        mode: "0640"
+
 - name: Generate CA key
   openssl_privatekey:
     path: "{{ openldap_ssl_dir }}/ca.key"
@@ -57,6 +85,7 @@
     group: openldap
     mode: "0640"
   register: openldap_ca_key
+  when: not (openldap_tls_letsencrypt | default(false) | bool)
 
 - name: Generate self-signed CA certificate (openssl CLI)
   command: >
@@ -65,6 +94,7 @@
     -subj "/O={{ openldap_organization }}/CN=Kakwa Lab LDAP CA"
   args:
     creates: "{{ openldap_ssl_dir }}/ca.crt"
+  when: not (openldap_tls_letsencrypt | default(false) | bool)
 
 - name: Generate LDAP server key
   openssl_privatekey:
@@ -72,6 +102,7 @@
     owner: openldap
     group: openldap
     mode: "0640"
+  when: not (openldap_tls_letsencrypt | default(false) | bool)
 
 - name: Generate LDAP server certificate signing request
   command: >
@@ -80,6 +111,7 @@
     -addext "subjectAltName=DNS:{{ openldap_fqdn }},DNS:utility,DNS:localhost"
   args:
     creates: "{{ openldap_ssl_dir }}/ldap.csr"
+  when: not (openldap_tls_letsencrypt | default(false) | bool)
 
 - name: Sign LDAP server certificate with CA
   command: >
@@ -88,6 +120,7 @@
     -CAcreateserial -out {{ openldap_ssl_dir }}/ldap.crt -days 3650
   args:
     creates: "{{ openldap_ssl_dir }}/ldap.crt"
+  when: not (openldap_tls_letsencrypt | default(false) | bool)
 
 - name: Set ownership on LDAP server certificate and key
   file:
@@ -98,6 +131,7 @@
   loop:
     - "{{ openldap_ssl_dir }}/ldap.crt"
     - "{{ openldap_ssl_dir }}/ldap.key"
+  when: not (openldap_tls_letsencrypt | default(false) | bool)
 
 - name: Create LDIF for TLS configuration (cn=config)
   copy:

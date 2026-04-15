@@ -17,7 +17,8 @@ openldap_ssh_ldap_readonly_uid: "ssh-ldap-readonly"
 openldap_ssh_ldap_readonly_dn: "uid={{ openldap_ssh_ldap_readonly_uid }},ou=services,{{ openldap_base_dn }}"
 openldap_ssh_ldap_readonly_password: "changeme-readonly"
 
-# Paths for TLS (self-signed)
+# Paths for TLS (self-signed unless openldap_tls_letsencrypt + certbot_letsencrypt role)
+openldap_tls_letsencrypt: false
 openldap_ssl_dir: "/etc/ldap/ssl"
 openldap_ca_cert: "{{ openldap_ssl_dir }}/ca.crt"
 openldap_server_cert: "{{ openldap_ssl_dir }}/ldap.crt"

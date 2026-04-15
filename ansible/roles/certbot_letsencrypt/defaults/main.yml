@@ -1,0 +1,11 @@
+---
+# Certbot + OVH DNS-01: one certificate (live dir = certbot_letsencrypt_cert_name) for multiple hostnames.
+certbot_letsencrypt_enable: false
+certbot_letsencrypt_email: ""
+certbot_letsencrypt_cert_name: ""
+certbot_letsencrypt_domains: []
+certbot_letsencrypt_ovh_dns_endpoint: "ovh-eu"
+certbot_letsencrypt_ovh_application_key: ""
+certbot_letsencrypt_ovh_application_secret: ""
+certbot_letsencrypt_ovh_consumer_key: ""
+certbot_letsencrypt_certbot_venv: /opt/certbot-ovh-venv

@@ -8,6 +8,12 @@
       create ansible/docker_registry.password.txt via the password lookup) for HTTP basic auth in front of the registry.
   when: docker_registry_nginx_enable | default(true) | bool
 
+- name: Role flags (nginx / TLS mode)
+  set_fact:
+    dr_nginx: "{{ docker_registry_nginx_enable | default(true) | bool }}"
+    dr_le: "{{ docker_registry_nginx_enable | default(true) | bool and docker_registry_nginx_ssl_enable | default(false) | bool and docker_registry_nginx_ssl_letsencrypt | default(false) | bool }}"
+    dr_ss: "{{ docker_registry_nginx_enable | default(true) | bool and docker_registry_nginx_ssl_enable | default(false) | bool and not (docker_registry_nginx_ssl_letsencrypt | default(false) | bool) }}"
+
 - name: Install docker-registry package
   apt:
     name: "{{ docker_registry_package }}"
@@ -54,7 +60,28 @@
     name: nginx
     state: present
     update_cache: true
-  when: docker_registry_nginx_enable | default(true) | bool
+  when: dr_nginx | bool
+
+- name: Let's Encrypt — nginx uses certificate from certbot_letsencrypt role
+  when: dr_le | bool
+  block:
+    - name: Require certbot_letsencrypt_cert_name for registry nginx TLS
+      assert:
+        that:
+          - certbot_letsencrypt_cert_name | default('') | length > 0
+        fail_msg: >-
+          Run the certbot_letsencrypt role before docker_registry (see utility.yml) and set certbot_letsencrypt_cert_name.
+
+    - name: Point registry nginx at shared Let's Encrypt certificate
+      set_fact:
+        docker_registry_nginx_ssl_cert: "/etc/letsencrypt/live/{{ certbot_letsencrypt_cert_name }}/fullchain.pem"
+        docker_registry_nginx_ssl_key: "/etc/letsencrypt/live/{{ certbot_letsencrypt_cert_name }}/privkey.pem"
+
+    - name: Stat shared Let's Encrypt fullchain for registry nginx
+      stat:
+        path: "{{ docker_registry_nginx_ssl_cert }}"
+      register: dr_registry_le_fullchain
+      failed_when: not dr_registry_le_fullchain.stat.exists
 
 - name: Deploy nginx log_format for optional detailed docker-registry access log
   template:
@@ -64,43 +91,48 @@
     group: root
     mode: "0644"
   notify: reload nginx
-  when: docker_registry_nginx_enable | default(true) | bool
+  when: dr_nginx | bool
 
-- name: Ensure nginx SSL cert directory exists for docker-registry
-  file:
-    path: "{{ docker_registry_nginx_ssl_cert_dir }}"
-    state: directory
-    mode: "0750"
-    owner: root
-    group: root
-  when: docker_registry_nginx_enable | default(true) | bool and docker_registry_nginx_ssl_enable | default(false) | bool
+- name: Self-signed TLS for nginx (when not using Let's Encrypt)
+  when: dr_ss | bool
+  block:
+    - name: Ensure nginx SSL cert directory exists for docker-registry
+      file:
+        path: "{{ docker_registry_nginx_ssl_cert_dir }}"
+        state: directory
+        mode: "0750"
+        owner: root
+        group: root
 
-- name: Generate self-signed SSL certificate for docker-registry nginx
-  command: >-
-    openssl req -x509 -nodes -days {{ docker_registry_nginx_ssl_valid_days }}
-    -newkey rsa:2048
-    -keyout {{ docker_registry_nginx_ssl_key }}
-    -out {{ docker_registry_nginx_ssl_cert }}
-    -subj "/CN={{ docker_registry_nginx_ssl_self_signed_cn }}"
-  args:
-    creates: "{{ docker_registry_nginx_ssl_cert }}"
-  when: docker_registry_nginx_enable | default(true) | bool and docker_registry_nginx_ssl_enable | default(false) | bool
-  notify: reload nginx
+    - name: Build subjectAltName for openssl -addext
+      set_fact:
+        docker_registry_openssl_subject_alt_name: "{{ docker_registry_nginx_ssl_san_dns | map('regex_replace', '^DNS:', '') | map('regex_replace', '^', 'DNS:') | join(',') }}"
 
-- name: Allow nginx to read docker-registry TLS key
-  file:
-    path: "{{ docker_registry_nginx_ssl_key }}"
-    owner: root
-    group: www-data
-    mode: "0640"
-  when: docker_registry_nginx_enable | default(true) | bool and docker_registry_nginx_ssl_enable | default(false) | bool
-  notify: reload nginx
+    - name: Generate self-signed SSL certificate for docker-registry nginx
+      command: >-
+        openssl req -x509 -nodes -days {{ docker_registry_nginx_ssl_valid_days }}
+        -newkey rsa:2048
+        -keyout {{ docker_registry_nginx_ssl_key }}
+        -out {{ docker_registry_nginx_ssl_cert }}
+        -subj "/CN={{ docker_registry_nginx_ssl_self_signed_cn }}"
+        -addext "subjectAltName={{ docker_registry_openssl_subject_alt_name }}"
+      args:
+        creates: "{{ docker_registry_nginx_ssl_cert }}"
+      notify: reload nginx
+
+    - name: Allow nginx to read docker-registry TLS key
+      file:
+        path: "{{ docker_registry_nginx_ssl_key }}"
+        owner: root
+        group: www-data
+        mode: "0640"
+      notify: reload nginx
 
 - name: Stat registry htpasswd file
   stat:
     path: "{{ docker_registry_auth_htpasswd_path }}"
   register: docker_registry_htpasswd_stat
-  when: docker_registry_nginx_enable | default(true) | bool
+  when: dr_nginx | bool
 
 - name: Deploy htpasswd for registry basic auth (bcrypt; requires passlib on the Ansible controller)
   copy:
@@ -110,7 +142,8 @@
     group: www-data
     mode: "0640"
   when: >-
-    docker_registry_nginx_enable | default(true) | bool
+    dr_nginx | bool
+    and not (docker_registry_htpasswd_stat.skipped | default(false))
     and (
       not docker_registry_htpasswd_stat.stat.exists | default(false)
       or docker_registry_auth_update_htpasswd | default(false) | bool
@@ -126,7 +159,7 @@
     group: root
     mode: "0644"
   notify: reload nginx
-  when: docker_registry_nginx_enable | default(true) | bool
+  when: dr_nginx | bool
 
 - name: Enable docker-registry nginx site
   file:
@@ -134,11 +167,11 @@
     dest: /etc/nginx/sites-enabled/docker-registry
     state: link
   notify: reload nginx
-  when: docker_registry_nginx_enable | default(true) | bool
+  when: dr_nginx | bool
 
 - name: Ensure nginx is started and enabled
   service:
     name: nginx
     state: started
     enabled: true
-  when: docker_registry_nginx_enable | default(true) | bool
+  when: dr_nginx | bool

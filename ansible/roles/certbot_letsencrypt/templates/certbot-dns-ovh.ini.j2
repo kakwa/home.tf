@@ -1,0 +1,5 @@
+# Ansible-managed — Certbot OVH DNS plugin (dns-01).
+dns_ovh_endpoint = {{ certbot_letsencrypt_ovh_dns_endpoint }}
+dns_ovh_application_key = {{ certbot_letsencrypt_ovh_application_key | trim }}
+dns_ovh_application_secret = {{ certbot_letsencrypt_ovh_application_secret | trim }}
+dns_ovh_consumer_key = {{ certbot_letsencrypt_ovh_consumer_key | trim }}
