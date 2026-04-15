@@ -9,6 +9,15 @@
     - { role: vim, tags: ["system", "vim"] }
     - { role: zsh, tags: ["system", "zsh"] }
     - { role: hosts_entries, tags: ["system", "hosts"] }
-    - { role: openldap, tags: ["utility", "openldap"] }
+    - role: openldap
+      tags: ["utility", "openldap"]
+      vars:
+        openldap_breakglass_password: "{{ vault_openldap_breakglass_password | default(lookup('password', playbook_dir ~ '/openldap_breakglass.password.txt chars=ascii_letters,digits length=24')) }}"
     - { role: ldapcherry, tags: ["utility", "ldapcherry"] }
     - { role: ssh_ldap, tags: ["utility", "ssh_ldap"] }
+    - role: docker_registry
+      tags: ["utility", "docker_registry"]
+      vars:
+        docker_registry_nginx_ssl_enable: true
+        docker_registry_auth_password: "{{ vault_docker_registry_password | default(lookup('password', playbook_dir ~ '/docker_registry.password.txt chars=ascii_letters,digits length=24')) }}"
+        docker_registry_http_secret: "{{ vault_docker_registry_http_secret | default(lookup('password', playbook_dir ~ '/docker_registry_http_secret.txt chars=ascii_letters,digits length=64')) }}"

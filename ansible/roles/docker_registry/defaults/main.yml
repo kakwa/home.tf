@@ -1,0 +1,51 @@
+---
+# Docker Distribution registry (Debian docker-registry package) + nginx reverse proxy
+
+docker_registry_package: docker-registry
+
+# Registry v3 defaults to OTLP trace export to localhost:4318; disable unless you use a collector.
+# Override to "otlp" and set OTEL_* endpoint vars (e.g. via extra drop-ins) if you want tracing.
+docker_registry_otel_traces_exporter: "none"
+
+docker_registry_http_addr: "127.0.0.1:5000"
+# Required when nginx (or any proxy) terminates TLS and clients see a different host than addr.
+# Otherwise blob upload responses use Location: http://127.0.0.1:5000/... and pushes break.
+docker_registry_http_relativeurls: true
+# Random at each process start breaks resumable uploads; set a stable value (vault or utility.yml lookup).
+docker_registry_http_secret: ""
+docker_registry_storage_path: "/var/lib/registry"
+
+# Nginx reverse proxy
+docker_registry_nginx_enable: true
+docker_registry_nginx_server_name: "registry.int.{{ openldap_domain | default('kakwalab.ovh') }}"
+docker_registry_nginx_listen_port: 80
+
+# X-Forwarded-Proto sent to docker-registry. Default empty = nginx $scheme (https when nginx_ssl_enable).
+# If another proxy terminates TLS in front of this nginx on plain :80, set to "https".
+docker_registry_nginx_forwarded_proto: ""
+
+docker_registry_nginx_ssl_enable: false
+docker_registry_nginx_ssl_port: 443
+docker_registry_nginx_ssl_cert_dir: "/etc/nginx/ssl/docker-registry"
+docker_registry_nginx_ssl_cert: "{{ docker_registry_nginx_ssl_cert_dir }}/cert.pem"
+docker_registry_nginx_ssl_key: "{{ docker_registry_nginx_ssl_cert_dir }}/key.pem"
+docker_registry_nginx_ssl_self_signed_cn: "{{ docker_registry_nginx_server_name }}"
+docker_registry_nginx_ssl_valid_days: 3650
+
+# HTTP basic auth in front of the registry (set password via vault / host vars)
+docker_registry_auth_user: "registry"
+docker_registry_auth_password: ""
+docker_registry_auth_htpasswd_path: "/etc/nginx/docker-registry.htpasswd"
+# Set true for one playbook run to rewrite htpasswd after changing docker_registry_auth_password
+docker_registry_auth_update_htpasswd: false
+
+# Registry process logging (/etc/docker/registry/config.yml → journald for docker-registry.service)
+# Use level: debug temporarily when troubleshooting 4xx/5xx on push/pull.
+docker_registry_log_level: info
+# When false, the registry emits an HTTP access log (stderr / journal) in addition to app logs.
+docker_registry_accesslog_disabled: true
+
+# Nginx: per-vhost error log (always). Raise to debug only while troubleshooting (noisy).
+docker_registry_nginx_error_log_level: warn
+# Adds conf.d log_format + dedicated access log with upstream_status / timings (needs reload).
+docker_registry_nginx_detailed_access_log: false

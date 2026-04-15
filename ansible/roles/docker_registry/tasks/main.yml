@@ -1,0 +1,144 @@
+---
+- name: Require registry basic-auth password when nginx is enabled
+  assert:
+    that:
+      - docker_registry_auth_password | length > 0
+    fail_msg: >-
+      Set docker_registry_auth_password (e.g. vault_docker_registry_password, or let utility.yml
+      create ansible/docker_registry.password.txt via the password lookup) for HTTP basic auth in front of the registry.
+  when: docker_registry_nginx_enable | default(true) | bool
+
+- name: Install docker-registry package
+  apt:
+    name: "{{ docker_registry_package }}"
+    state: present
+    update_cache: true
+
+- name: Ensure systemd drop-in directory for docker-registry exists
+  file:
+    path: /etc/systemd/system/docker-registry.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy systemd drop-in to control OpenTelemetry trace export
+  template:
+    src: docker-registry.service.d-otel.conf.j2
+    dest: /etc/systemd/system/docker-registry.service.d/99-ansible-otel.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart docker-registry with daemon-reload
+
+- name: Apply systemd drop-in before starting docker-registry
+  meta: flush_handlers
+
+- name: Deploy registry config.yml
+  template:
+    src: config.yml.j2
+    dest: /etc/docker/registry/config.yml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart docker-registry
+
+- name: Ensure docker-registry service is started and enabled
+  service:
+    name: docker-registry
+    state: started
+    enabled: true
+
+- name: Install nginx
+  apt:
+    name: nginx
+    state: present
+    update_cache: true
+  when: docker_registry_nginx_enable | default(true) | bool
+
+- name: Deploy nginx log_format for optional detailed docker-registry access log
+  template:
+    src: nginx-docker-registry-log-format.conf.j2
+    dest: /etc/nginx/conf.d/00-docker-registry-log-format.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
+  when: docker_registry_nginx_enable | default(true) | bool
+
+- name: Ensure nginx SSL cert directory exists for docker-registry
+  file:
+    path: "{{ docker_registry_nginx_ssl_cert_dir }}"
+    state: directory
+    mode: "0750"
+    owner: root
+    group: root
+  when: docker_registry_nginx_enable | default(true) | bool and docker_registry_nginx_ssl_enable | default(false) | bool
+
+- name: Generate self-signed SSL certificate for docker-registry nginx
+  command: >-
+    openssl req -x509 -nodes -days {{ docker_registry_nginx_ssl_valid_days }}
+    -newkey rsa:2048
+    -keyout {{ docker_registry_nginx_ssl_key }}
+    -out {{ docker_registry_nginx_ssl_cert }}
+    -subj "/CN={{ docker_registry_nginx_ssl_self_signed_cn }}"
+  args:
+    creates: "{{ docker_registry_nginx_ssl_cert }}"
+  when: docker_registry_nginx_enable | default(true) | bool and docker_registry_nginx_ssl_enable | default(false) | bool
+  notify: reload nginx
+
+- name: Allow nginx to read docker-registry TLS key
+  file:
+    path: "{{ docker_registry_nginx_ssl_key }}"
+    owner: root
+    group: www-data
+    mode: "0640"
+  when: docker_registry_nginx_enable | default(true) | bool and docker_registry_nginx_ssl_enable | default(false) | bool
+  notify: reload nginx
+
+- name: Stat registry htpasswd file
+  stat:
+    path: "{{ docker_registry_auth_htpasswd_path }}"
+  register: docker_registry_htpasswd_stat
+  when: docker_registry_nginx_enable | default(true) | bool
+
+- name: Deploy htpasswd for registry basic auth (bcrypt; requires passlib on the Ansible controller)
+  copy:
+    dest: "{{ docker_registry_auth_htpasswd_path }}"
+    content: "{{ docker_registry_auth_user }}:{{ docker_registry_auth_password | password_hash('bcrypt', ident='2b', rounds=12) }}\n"
+    owner: root
+    group: www-data
+    mode: "0640"
+  when: >-
+    docker_registry_nginx_enable | default(true) | bool
+    and (
+      not docker_registry_htpasswd_stat.stat.exists | default(false)
+      or docker_registry_auth_update_htpasswd | default(false) | bool
+    )
+  no_log: true
+  notify: reload nginx
+
+- name: Deploy nginx site config for docker-registry
+  template:
+    src: nginx-docker-registry.conf.j2
+    dest: /etc/nginx/sites-available/docker-registry
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
+  when: docker_registry_nginx_enable | default(true) | bool
+
+- name: Enable docker-registry nginx site
+  file:
+    src: /etc/nginx/sites-available/docker-registry
+    dest: /etc/nginx/sites-enabled/docker-registry
+    state: link
+  notify: reload nginx
+  when: docker_registry_nginx_enable | default(true) | bool
+
+- name: Ensure nginx is started and enabled
+  service:
+    name: nginx
+    state: started
+    enabled: true
+  when: docker_registry_nginx_enable | default(true) | bool
