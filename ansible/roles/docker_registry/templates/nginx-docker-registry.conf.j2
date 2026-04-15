@@ -1,0 +1,82 @@
+# Docker registry reverse proxy — managed by Ansible
+# Upstream: {{ docker_registry_http_addr }}
+
+{% if docker_registry_nginx_ssl_enable | default(false) | bool %}
+server {
+    listen {{ docker_registry_nginx_listen_port }};
+    listen [::]:{{ docker_registry_nginx_listen_port }};
+    server_name {{ docker_registry_nginx_server_name }};
+{% if docker_registry_nginx_ssl_port | int == 443 %}
+    return 301 https://$host$request_uri;
+{% else %}
+    return 301 https://$host:{{ docker_registry_nginx_ssl_port }}$request_uri;
+{% endif %}
+}
+
+server {
+    listen {{ docker_registry_nginx_ssl_port }} ssl;
+    listen [::]:{{ docker_registry_nginx_ssl_port }} ssl;
+    server_name {{ docker_registry_nginx_server_name }};
+
+    error_log /var/log/nginx/docker-registry.error.log {{ docker_registry_nginx_error_log_level | default('warn') }};
+{% if docker_registry_nginx_detailed_access_log | default(false) | bool %}
+    access_log /var/log/nginx/docker-registry.access.log docker_registry_detailed;
+{% endif %}
+
+    ssl_certificate {{ docker_registry_nginx_ssl_cert }};
+    ssl_certificate_key {{ docker_registry_nginx_ssl_key }};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    location / {
+        auth_basic "Docker Registry";
+        auth_basic_user_file {{ docker_registry_auth_htpasswd_path }};
+
+        client_max_body_size 0;
+        proxy_request_buffering off;
+        proxy_buffering off;
+
+        proxy_pass http://{{ docker_registry_http_addr }};
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto {% if docker_registry_nginx_forwarded_proto | default('') | length > 0 %}{{ docker_registry_nginx_forwarded_proto }}{% else %}$scheme{% endif %};
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_redirect off;
+        proxy_http_version 1.1;
+        proxy_read_timeout 900s;
+        proxy_send_timeout 900s;
+    }
+}
+{% else %}
+server {
+    listen {{ docker_registry_nginx_listen_port }};
+    listen [::]:{{ docker_registry_nginx_listen_port }};
+    server_name {{ docker_registry_nginx_server_name }};
+
+    error_log /var/log/nginx/docker-registry.error.log {{ docker_registry_nginx_error_log_level | default('warn') }};
+{% if docker_registry_nginx_detailed_access_log | default(false) | bool %}
+    access_log /var/log/nginx/docker-registry.access.log docker_registry_detailed;
+{% endif %}
+
+    location / {
+        auth_basic "Docker Registry";
+        auth_basic_user_file {{ docker_registry_auth_htpasswd_path }};
+
+        client_max_body_size 0;
+        proxy_request_buffering off;
+        proxy_buffering off;
+
+        proxy_pass http://{{ docker_registry_http_addr }};
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto {% if docker_registry_nginx_forwarded_proto | default('') | length > 0 %}{{ docker_registry_nginx_forwarded_proto }}{% else %}$scheme{% endif %};
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_redirect off;
+        proxy_http_version 1.1;
+        proxy_read_timeout 900s;
+        proxy_send_timeout 900s;
+    }
+}
+{% endif %}

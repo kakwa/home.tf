@@ -1,0 +1,22 @@
+# Managed by Ansible — Docker Distribution registry
+version: 0.1
+log:
+  accesslog:
+    disabled: {{ docker_registry_accesslog_disabled | default(true) | bool | ternary('true', 'false') }}
+  level: {{ docker_registry_log_level | default('info') }}
+storage:
+  filesystem:
+    rootdirectory: {{ docker_registry_storage_path }}
+http:
+  addr: {{ docker_registry_http_addr }}
+  relativeurls: {{ docker_registry_http_relativeurls | default(true) | bool | ternary('true', 'false') }}
+{% if docker_registry_http_secret | default('') | length > 0 %}
+  secret: {{ docker_registry_http_secret | to_json }}
+{% endif %}
+  headers:
+    X-Content-Type-Options: [nosniff]
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3

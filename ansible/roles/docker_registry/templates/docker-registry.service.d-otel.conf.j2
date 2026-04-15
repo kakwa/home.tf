@@ -1,0 +1,6 @@
+# Managed by Ansible — Distribution registry v3+ enables OTLP traces by default
+# (https://github.com/distribution/distribution/issues/4270). Without a collector on
+# localhost:4318, export fails with "connection refused". Set exporter to "none" unless
+# you run an OpenTelemetry collector and configure endpoints separately.
+[Service]
+Environment=OTEL_TRACES_EXPORTER={{ docker_registry_otel_traces_exporter }}
