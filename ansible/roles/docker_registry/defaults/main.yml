@@ -25,12 +25,18 @@ docker_registry_nginx_listen_port: 80
 docker_registry_nginx_forwarded_proto: ""
 
 docker_registry_nginx_ssl_enable: false
+# When true: nginx TLS uses /etc/letsencrypt/live/<certbot_letsencrypt_cert_name>/ (certbot_letsencrypt role must run first).
+docker_registry_nginx_ssl_letsencrypt: false
 docker_registry_nginx_ssl_port: 443
 docker_registry_nginx_ssl_cert_dir: "/etc/nginx/ssl/docker-registry"
 docker_registry_nginx_ssl_cert: "{{ docker_registry_nginx_ssl_cert_dir }}/cert.pem"
 docker_registry_nginx_ssl_key: "{{ docker_registry_nginx_ssl_cert_dir }}/key.pem"
+
 docker_registry_nginx_ssl_self_signed_cn: "{{ docker_registry_nginx_server_name }}"
 docker_registry_nginx_ssl_valid_days: 3650
+# Hostnames for X509v3 Subject Alternative Name (required by Go 1.19+ clients; CN alone is rejected).
+docker_registry_nginx_ssl_san_dns:
+  - "{{ docker_registry_nginx_server_name }}"
 
 # HTTP basic auth in front of the registry (set password via vault / host vars)
 docker_registry_auth_user: "registry"

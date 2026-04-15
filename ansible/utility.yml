@@ -1,23 +1,43 @@
 ---
-# Utility VM: base roles + OpenLDAP + ldapcherry (base DN kakwalab.ovh, TLS/STARTTLS)
+# Utility VM: base roles + Certbot (OVH DNS-01) + OpenLDAP + ldapcherry + docker registry
 - name: Utility VM Setup
   hosts: all
   become: true
+  vars:
+    openldap_domain: "kakwalab.ovh"
+    certbot_letsencrypt_enable: true
+    certbot_letsencrypt_cert_name: "registry.int.kakwalab.ovh"
+    certbot_letsencrypt_domains:
+      - "{{ certbot_letsencrypt_cert_name }}"
+      - "registry.int.{{ openldap_domain }}"
+      - "ldap.int.{{ openldap_domain }}"
   roles:
     - { role: repos, tags: ["system", "repos"] }
     - { role: misc-base, tags: ["system", "misc-base"] }
     - { role: vim, tags: ["system", "vim"] }
     - { role: zsh, tags: ["system", "zsh"] }
     - { role: hosts_entries, tags: ["system", "hosts"] }
+    - role: certbot_letsencrypt
+      tags: ["utility", "certbot", "letsencrypt"]
+      vars:
+        certbot_letsencrypt_email: "{{ vault_letsencrypt_email | default('hostmaster@kakwalab.ovh') }}"
+        certbot_letsencrypt_ovh_application_key: "{{ vault_docker_registry_ovh_application_key | default(lookup('file', playbook_dir ~ '/ovh_dns_application_key.txt') | trim, true) }}"
+        certbot_letsencrypt_ovh_application_secret: "{{ vault_docker_registry_ovh_application_secret | default(lookup('file', playbook_dir ~ '/ovh_dns_application_secret.txt') | trim, true) }}"
+        certbot_letsencrypt_ovh_consumer_key: "{{ vault_docker_registry_ovh_consumer_key | default(lookup('file', playbook_dir ~ '/ovh_dns_consumer_key.txt') | trim, true) }}"
     - role: openldap
       tags: ["utility", "openldap"]
       vars:
         openldap_breakglass_password: "{{ vault_openldap_breakglass_password | default(lookup('password', playbook_dir ~ '/openldap_breakglass.password.txt chars=ascii_letters,digits length=24')) }}"
-    - { role: ldapcherry, tags: ["utility", "ldapcherry"] }
+        openldap_tls_letsencrypt: "{{ certbot_letsencrypt_enable | default(false) }}"
+    - role: ldapcherry
+      tags: ["utility", "ldapcherry"]
+      vars:
+        ldapcherry_nginx_ssl_letsencrypt: "{{ certbot_letsencrypt_enable | default(false) }}"
     - { role: ssh_ldap, tags: ["utility", "ssh_ldap"] }
     - role: docker_registry
       tags: ["utility", "docker_registry"]
       vars:
         docker_registry_nginx_ssl_enable: true
+        docker_registry_nginx_ssl_letsencrypt: true
         docker_registry_auth_password: "{{ vault_docker_registry_password | default(lookup('password', playbook_dir ~ '/docker_registry.password.txt chars=ascii_letters,digits length=24')) }}"
         docker_registry_http_secret: "{{ vault_docker_registry_http_secret | default(lookup('password', playbook_dir ~ '/docker_registry_http_secret.txt chars=ascii_letters,digits length=64')) }}"

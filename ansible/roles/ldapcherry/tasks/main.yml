@@ -54,6 +54,29 @@
     update_cache: true
   when: ldapcherry_nginx_enable | default(true) | bool
 
+- name: Use Let's Encrypt paths for ldapcherry nginx TLS
+  when:
+    - ldapcherry_nginx_enable | default(true) | bool
+    - ldapcherry_nginx_ssl_enable | default(false) | bool
+    - ldapcherry_nginx_ssl_letsencrypt | default(false) | bool
+  block:
+    - name: Require certbot_letsencrypt_cert_name for ldapcherry nginx TLS
+      assert:
+        that:
+          - certbot_letsencrypt_cert_name | default('') | length > 0
+        fail_msg: Run the certbot_letsencrypt role first and set certbot_letsencrypt_cert_name (see utility.yml).
+
+    - name: Point ldapcherry nginx at shared Let's Encrypt certificate
+      set_fact:
+        ldapcherry_nginx_ssl_cert: "/etc/letsencrypt/live/{{ certbot_letsencrypt_cert_name }}/fullchain.pem"
+        ldapcherry_nginx_ssl_key: "/etc/letsencrypt/live/{{ certbot_letsencrypt_cert_name }}/privkey.pem"
+
+    - name: Stat Let's Encrypt fullchain for ldapcherry nginx
+      stat:
+        path: "{{ ldapcherry_nginx_ssl_cert }}"
+      register: ldapcherry_le_fullchain
+      failed_when: not ldapcherry_le_fullchain.stat.exists
+
 - name: Ensure nginx SSL cert directory exists for ldapcherry
   file:
     path: "{{ ldapcherry_nginx_ssl_cert_dir }}"
@@ -61,7 +84,9 @@
     mode: "0750"
     owner: root
     group: root
-  when: ldapcherry_nginx_enable | default(true) | bool and ldapcherry_nginx_ssl_enable | default(false) | bool
+  when: >-
+    ldapcherry_nginx_enable | default(true) | bool and ldapcherry_nginx_ssl_enable | default(false) | bool
+    and not (ldapcherry_nginx_ssl_letsencrypt | default(false) | bool)
 
 - name: Generate self-signed SSL certificate for ldapcherry nginx
   command: >-
@@ -72,7 +97,9 @@
     -subj "/CN={{ ldapcherry_nginx_ssl_self_signed_cn }}"
   args:
     creates: "{{ ldapcherry_nginx_ssl_cert }}"
-  when: ldapcherry_nginx_enable | default(true) | bool and ldapcherry_nginx_ssl_enable | default(false) | bool
+  when: >-
+    ldapcherry_nginx_enable | default(true) | bool and ldapcherry_nginx_ssl_enable | default(false) | bool
+    and not (ldapcherry_nginx_ssl_letsencrypt | default(false) | bool)
   notify: reload nginx
 
 - name: Deploy nginx site config for ldapcherry
