@@ -47,3 +47,5 @@ images
 ansible/docker_registry.password.txt
 ansible/openldap_breakglass.password.txt
 ansible/docker_registry_http_secret.txt
+# Ansible: OVH API tokens for Certbot DNS-01 (one line per file next to utility.yml)
+ansible/ovh_dns_*.txt
