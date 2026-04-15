@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: { app: {{ .Release.Name | quote }} }
+  template:
+    metadata:
+      labels: { app: {{ .Release.Name | quote }} }
+    spec:
+      imagePullSecrets:
+        {{- if .Values.registryAuth.create }}
+        - name: {{ .Release.Name }}-registry
+        {{- end }}
+      containers:
+        - name: blog
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}

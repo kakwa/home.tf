@@ -1,0 +1,24 @@
+replicaCount: 2
+
+image:
+  repository: registry.int.kakwalab.ovh/technically-blog
+  tag: latest
+  pullPolicy: Always
+
+registryAuth:
+  create: true
+  server: registry.int.kakwalab.ovh
+  username: registry
+  password: TODO
+
+service:
+  port: 80
+  targetPort: 80
+
+ingress:
+  enabled: false
+  host: ""
+  className: traefik
+  # Traefik → pod when the app serves HTTPS with a cert the cluster does not trust.
+  upstreamScheme: http
+  upstreamInsecureSkipVerify: true

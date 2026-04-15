@@ -1,0 +1,8 @@
+{{- if and .Values.ingress.enabled .Values.ingress.upstreamInsecureSkipVerify }}
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: {{ include "technically-blog.serversTransportName" . }}
+spec:
+  insecureSkipVerify: true
+{{- end }}
