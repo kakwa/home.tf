@@ -46,6 +46,14 @@ resource "dns_cname_record" "ldap" {
   ttl   = 300
 }
 
+# CNAME registry.int.kakwalab.ovh -> utility.int.kakwalab.ovh (Docker registry, etc.)
+resource "dns_cname_record" "registry" {
+  zone  = var.dns_zone
+  name  = "registry"
+  cname = "utility.${var.dns_zone}"
+  ttl   = 300
+}
+
 output "cluster_fqdns" {
   description = "DNS names for cluster hosts under int.<zone>"
   value = {
