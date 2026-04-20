@@ -24,6 +24,13 @@
         certbot_letsencrypt_ovh_application_key: "{{ vault_docker_registry_ovh_application_key | default(lookup('file', playbook_dir ~ '/ovh_dns_application_key.txt') | trim, true) }}"
         certbot_letsencrypt_ovh_application_secret: "{{ vault_docker_registry_ovh_application_secret | default(lookup('file', playbook_dir ~ '/ovh_dns_application_secret.txt') | trim, true) }}"
         certbot_letsencrypt_ovh_consumer_key: "{{ vault_docker_registry_ovh_consumer_key | default(lookup('file', playbook_dir ~ '/ovh_dns_consumer_key.txt') | trim, true) }}"
+    - role: docker_registry
+      tags: ["utility", "docker_registry"]
+      vars:
+        docker_registry_nginx_ssl_enable: true
+        docker_registry_nginx_ssl_letsencrypt: true
+        docker_registry_auth_password: "{{ vault_docker_registry_password | default(lookup('password', playbook_dir ~ '/docker_registry.password.txt chars=ascii_letters,digits length=24')) }}"
+        docker_registry_http_secret: "{{ vault_docker_registry_http_secret | default(lookup('password', playbook_dir ~ '/docker_registry_http_secret.txt chars=ascii_letters,digits length=64')) }}"
     - role: openldap
       tags: ["utility", "openldap"]
       vars:
@@ -34,10 +41,4 @@
       vars:
         ldapcherry_nginx_ssl_letsencrypt: "{{ certbot_letsencrypt_enable | default(false) }}"
     - { role: ssh_ldap, tags: ["utility", "ssh_ldap"] }
-    - role: docker_registry
-      tags: ["utility", "docker_registry"]
-      vars:
-        docker_registry_nginx_ssl_enable: true
-        docker_registry_nginx_ssl_letsencrypt: true
-        docker_registry_auth_password: "{{ vault_docker_registry_password | default(lookup('password', playbook_dir ~ '/docker_registry.password.txt chars=ascii_letters,digits length=24')) }}"
-        docker_registry_http_secret: "{{ vault_docker_registry_http_secret | default(lookup('password', playbook_dir ~ '/docker_registry_http_secret.txt chars=ascii_letters,digits length=64')) }}"
+

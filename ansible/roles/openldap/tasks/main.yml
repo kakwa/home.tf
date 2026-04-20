@@ -78,6 +78,15 @@
         group: openldap
         mode: "0640"
 
+    - name: Let openldap traverse Let's Encrypt live and archive directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0711"
+      loop:
+        - /etc/letsencrypt/live
+        - /etc/letsencrypt/archive
+
 - name: Generate CA key
   openssl_privatekey:
     path: "{{ openldap_ssl_dir }}/ca.key"
@@ -133,7 +142,25 @@
     - "{{ openldap_ssl_dir }}/ldap.key"
   when: not (openldap_tls_letsencrypt | default(false) | bool)
 
-- name: Create LDIF for TLS configuration (cn=config)
+# olcSecurity tls=1 breaks ldapi EXTERNAL on some Debian slapd builds even with olcLocalSSF;
+# cleartext LDAP is limited to loopback via openldap_services instead.
+- name: Create LDIF to add TLS settings to cn=config (first install)
+  copy:
+    content: |
+      dn: cn=config
+      changetype: modify
+      add: olcTLSCACertificateFile
+      olcTLSCACertificateFile: {{ openldap_ca_cert }}
+      -
+      add: olcTLSCertificateFile
+      olcTLSCertificateFile: {{ openldap_server_cert }}
+      -
+      add: olcTLSCertificateKeyFile
+      olcTLSCertificateKeyFile: {{ openldap_server_key }}
+    dest: "{{ openldap_ldif_dir }}/openldap-tls-add.ldif"
+    mode: "0600"
+
+- name: Create LDIF to replace TLS settings on cn=config (updates)
   copy:
     content: |
       dn: cn=config
@@ -146,15 +173,8 @@
       -
       replace: olcTLSCertificateKeyFile
       olcTLSCertificateKeyFile: {{ openldap_server_key }}
-      -
-      replace: olcLocalSSF
-      olcLocalSSF: 71
-      -
-      replace: olcSecurity
-      olcSecurity: tls=1
-    dest: "{{ openldap_ldif_dir }}/openldap-tls.ldif"
+    dest: "{{ openldap_ldif_dir }}/openldap-tls-replace.ldif"
     mode: "0600"
-  notify: restart slapd
 
 - name: Configure SLAPD_SERVICES (ldap + ldaps + ldapi)
   lineinfile:
@@ -173,8 +193,7 @@
 - name: Flush handlers so slapd restarts with ldapi before schema load
   meta: flush_handlers
 
-# Load OpenSSH LPK schema *before* applying TLS config (olcSecurity/olcLocalSSF),
-# otherwise ldapi EXTERNAL fails with "Confidentiality required"
+# Load OpenSSH LPK schema before TLS if you later tighten global security; with loopback-only ldap://, ldapi stays usable.
 - name: Load OpenSSH LPK schema (sshPublicKey) into slapd
   copy:
     src: openssh-lpk.ldif
@@ -371,28 +390,55 @@
   register: openldap_acl_add_ldapi
   become: true
   when: openldap_ssh_ldap_readonly_dn not in (openldap_acl_search.stdout | default(''))
-  failed_when: openldap_acl_add_ldapi.rc is defined and openldap_acl_add_ldapi.rc != 0 and openldap_acl_add_ldapi.rc != 13
+  failed_when: openldap_acl_add_ldapi.rc is defined and openldap_acl_add_ldapi.rc not in [0, 13, 20]
+  changed_when: openldap_acl_add_ldapi.rc == 0
 
-- name: Apply TLS configuration to slapd (ldapi EXTERNAL)
-  command: ldapmodify -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/openldap-tls.ldif
-  register: openldap_tls_apply
-  changed_when: openldap_tls_apply.rc == 0
+- name: Apply TLS to cn=config via ldapi (add TLS attrs when absent)
+  command: ldapmodify -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/openldap-tls-add.ldif
+  register: openldap_tls_apply_add
+  changed_when: openldap_tls_apply_add.rc == 0
   failed_when: false
   become: true
+  notify: restart slapd
 
-- name: Add olcLocalSSF via LDAPS (recover when ldapi requires confidentiality)
-  copy:
-    content: |
-      dn: cn=config
-      changetype: modify
-      replace: olcLocalSSF
-      olcLocalSSF: 71
-    dest: "{{ openldap_ldif_dir }}/openldap-localssf.ldif"
-    mode: "0600"
-  when: openldap_tls_apply.rc != 0
+- name: Apply TLS to cn=config via ldapi (replace TLS attrs when already present)
+  command: ldapmodify -Y EXTERNAL -H ldapi:/// -f {{ openldap_ldif_dir }}/openldap-tls-replace.ldif
+  register: openldap_tls_apply_replace
+  when: openldap_tls_apply_add.rc != 0
+  changed_when: openldap_tls_apply_replace.rc == 0
+  failed_when: openldap_tls_apply_replace.rc != 0
+  become: true
+  notify: restart slapd
 
 - name: Flush handlers so slapd restarts with ldaps before OU/group creation
   meta: flush_handlers
+
+- name: Wait for slapd LDAP and LDAPS TCP after restart (Ansible ldap modules bind next)
+  wait_for:
+    host: 127.0.0.1
+    port: "{{ item }}"
+    delay: 2
+    timeout: 120
+  loop:
+    - 389
+    - 636
+
+- name: Wait until admin can bind over STARTTLS on loopback LDAP (after restart)
+  community.general.ldap_search:
+    dn: "{{ openldap_base_dn }}"
+    scope: base
+    filter: "(objectClass=*)"
+    attrs: ["objectClass"]
+    server_uri: "{{ openldap_ansible_bind_server_uri }}"
+    start_tls: "{{ openldap_ansible_bind_start_tls | bool }}"
+    bind_dn: "cn=admin,{{ openldap_base_dn }}"
+    bind_pw: "{{ openldap_admin_password }}"
+    validate_certs: false
+  register: openldap_ldap_ready
+  until: openldap_ldap_ready is success
+  retries: "{{ openldap_ldap_ready_retries | int }}"
+  delay: "{{ openldap_ldap_ready_delay | int }}"
+  changed_when: false
 
 - name: Get existing OUs under base DN
   community.general.ldap_search:
@@ -400,12 +446,12 @@
     scope: "onelevel"
     filter: "(objectClass=organizationalUnit)"
     attrs: ["ou"]
-    server_uri: "ldaps://127.0.0.1:636/"
+    server_uri: "{{ openldap_ansible_bind_server_uri }}"
+    start_tls: "{{ openldap_ansible_bind_start_tls | bool }}"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
   register: openldap_existing_ous
-  failed_when: false
   changed_when: false
 
 - name: Create base OUs (people, groups) in LDAP
@@ -415,7 +461,8 @@
     attributes:
       ou: "{{ item.ou }}"
     state: present
-    server_uri: "ldaps://127.0.0.1:636/"
+    server_uri: "{{ openldap_ansible_bind_server_uri }}"
+    start_tls: "{{ openldap_ansible_bind_start_tls | bool }}"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
@@ -424,9 +471,7 @@
     - { ou: "groups" }
     - { ou: "services" }
   when: item.ou not in (openldap_existing_ous.results | default([]) | map(attribute='ou') | flatten | list)
-  ignore_errors: true
   register: openldap_ou_result
-  changed_when: openldap_ou_result is not failed
 
 - name: Create default groups cn=users and cn=admins for ldapcherry (posixGroup + GIDs)
   community.general.ldap_entry:
@@ -439,14 +484,14 @@
       gidNumber: "{{ openldap_group_gids[item] | string }}"
       member: ["cn=admin,{{ openldap_base_dn }}"]
     state: present
-    server_uri: "ldaps://127.0.0.1:636/"
+    server_uri: "{{ openldap_ansible_bind_server_uri }}"
+    start_tls: "{{ openldap_ansible_bind_start_tls | bool }}"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
   loop:
     - users
     - admins
-  ignore_errors: true
   register: openldap_default_groups_result
 
 - name: Create groups ssh-admins, k8s-admins, ssh-users, k8s-users (posixGroup + GIDs, ldapcherry + SSH/sudo)
@@ -460,12 +505,12 @@
       gidNumber: "{{ openldap_group_gids[item] | string }}"
       member: ["cn=admin,{{ openldap_base_dn }}"]
     state: present
-    server_uri: "ldaps://127.0.0.1:636/"
+    server_uri: "{{ openldap_ansible_bind_server_uri }}"
+    start_tls: "{{ openldap_ansible_bind_start_tls | bool }}"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
   loop: "{{ openldap_role_groups }}"
-  ignore_errors: true
   register: openldap_role_groups_result
 
 # Read-only technical account for ssh_ldap (NSS/PAM/AuthorizedKeysCommand)
@@ -489,7 +534,8 @@
       sn: "{{ openldap_ssh_ldap_readonly_uid }}"
       userPassword: "{{ openldap_ssh_ldap_readonly_password_hash.stdout }}"
     state: present
-    server_uri: "ldaps://127.0.0.1:636/"
+    server_uri: "{{ openldap_ansible_bind_server_uri }}"
+    start_tls: "{{ openldap_ansible_bind_start_tls | bool }}"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
@@ -500,7 +546,8 @@
     dn: "ou=people,{{ openldap_base_dn }}"
     filter: "(uid={{ openldap_default_user_uid }})"
     scope: "onelevel"
-    server_uri: "ldaps://127.0.0.1:636/"
+    server_uri: "{{ openldap_ansible_bind_server_uri }}"
+    start_tls: "{{ openldap_ansible_bind_start_tls | bool }}"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
@@ -532,7 +579,8 @@
       loginShell: "{{ openldap_default_user_shell }}"
       userPassword: "{{ openldap_default_user_password_hash.stdout }}"
     state: present
-    server_uri: "ldaps://127.0.0.1:636/"
+    server_uri: "{{ openldap_ansible_bind_server_uri }}"
+    start_tls: "{{ openldap_ansible_bind_start_tls | bool }}"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
@@ -562,14 +610,15 @@
     and ((openldap_default_user_search.results | default([]) | length > 0)
          or (openldap_default_user_created is defined and openldap_default_user_created is changed))
 
-- name: Add SSH public keys to default user via LDAPS (ensure key present)
+- name: Add SSH public keys to default user via STARTTLS (ensure key present)
   community.general.ldap_attrs:
     dn: "uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"
     state: present
     attributes:
       objectClass: ["ldapPublicKey"]
       sshPublicKey: "{{ openldap_default_user_ssh_public_keys }}"
-    server_uri: "ldaps://127.0.0.1:636/"
+    server_uri: "{{ openldap_ansible_bind_server_uri }}"
+    start_tls: "{{ openldap_ansible_bind_start_tls | bool }}"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
@@ -579,8 +628,6 @@
     and ((openldap_default_user_search.results | default([]) | length > 0)
          or (openldap_default_user_created is defined and openldap_default_user_created is changed))
   register: openldap_default_user_ssh_ldaps
-  failed_when: false
-  changed_when: openldap_default_user_ssh_ldaps is not failed
 
 - name: Add default user (carpenti) to group cn=users
   community.general.ldap_attrs:
@@ -589,7 +636,8 @@
     attributes:
       member: ["cn=admin,{{ openldap_base_dn }}", "uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"]
       memberUid: ["{{ openldap_default_user_uid }}"]
-    server_uri: "ldaps://127.0.0.1:636/"
+    server_uri: "{{ openldap_ansible_bind_server_uri }}"
+    start_tls: "{{ openldap_ansible_bind_start_tls | bool }}"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
@@ -605,7 +653,8 @@
     attributes:
       member: ["cn=admin,{{ openldap_base_dn }}", "uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"]
       memberUid: ["{{ openldap_default_user_uid }}"]
-    server_uri: "ldaps://127.0.0.1:636/"
+    server_uri: "{{ openldap_ansible_bind_server_uri }}"
+    start_tls: "{{ openldap_ansible_bind_start_tls | bool }}"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
@@ -621,7 +670,8 @@
     attributes:
       member: ["cn=admin,{{ openldap_base_dn }}", "uid={{ openldap_default_user_uid }},ou=people,{{ openldap_base_dn }}"]
       memberUid: ["{{ openldap_default_user_uid }}"]
-    server_uri: "ldaps://127.0.0.1:636/"
+    server_uri: "{{ openldap_ansible_bind_server_uri }}"
+    start_tls: "{{ openldap_ansible_bind_start_tls | bool }}"
     bind_dn: "cn=admin,{{ openldap_base_dn }}"
     bind_pw: "{{ openldap_admin_password }}"
     validate_certs: false
@@ -645,7 +695,7 @@
 
 - name: Ensure default user has userWithMemberOf for memberOf overlay
   command: >
-    ldapmodify -H ldaps://127.0.0.1:636/ -x
+    ldapmodify -H {{ openldap_ansible_bind_server_uri }} -ZZ -x
     -D "cn=admin,{{ openldap_base_dn }}" -w "{{ openldap_admin_password }}"
     -f "{{ openldap_ldif_dir }}/memberof-add-oc.ldif"
   environment:
@@ -671,7 +721,7 @@
 
 - name: Touch groups to refresh memberOf on user entries
   command: >
-    ldapmodify -H ldaps://127.0.0.1:636/ -x
+    ldapmodify -H {{ openldap_ansible_bind_server_uri }} -ZZ -x
     -D "cn=admin,{{ openldap_base_dn }}" -w "{{ openldap_admin_password }}"
     -f "{{ openldap_ldif_dir }}/memberof-touch-{{ item }}.ldif"
   environment:

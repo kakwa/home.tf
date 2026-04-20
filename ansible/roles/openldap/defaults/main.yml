@@ -24,8 +24,15 @@ openldap_ca_cert: "{{ openldap_ssl_dir }}/ca.crt"
 openldap_server_cert: "{{ openldap_ssl_dir }}/ldap.crt"
 openldap_server_key: "{{ openldap_ssl_dir }}/ldap.key"
 
-# Listen on ldap (STARTTLS), ldaps, and ldapi (required for schema load and local admin)
-openldap_services: "ldap:/// ldaps:/// ldapi:///"
+# Plain LDAP only on loopback (STARTTLS for local tools); LDAPS + ldapi for remote/admin.
+# Avoids cleartext simple binds on the network while keeping ldapi usable (olcSecurity tls=1 breaks ldapi on some builds).
+openldap_services: "ldap://127.0.0.1:389/ ldaps:/// ldapi:///"
+
+# Ansible ldap_* modules: loopback LDAP + STARTTLS (TLS must be configured in cn=config first).
+openldap_ansible_bind_server_uri: "ldap://127.0.0.1:389/"
+openldap_ansible_bind_start_tls: true
+openldap_ldap_ready_retries: 12
+openldap_ldap_ready_delay: 2
 
 # Permanent directory for LDIF files (TLS config, schema, etc.)
 openldap_ldif_dir: "/etc/ldap/ldifs"
