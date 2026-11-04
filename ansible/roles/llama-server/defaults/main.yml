@@ -1,0 +1,111 @@
+---
+# llama.cpp server (llama-server) defaults
+#
+# Target host profile: Debian sid, AMD Radeon RX 7900 XT (20 GiB), running
+# Qwen3.8-27B UD quants with MTP speculative decoding.
+# The `repos` role must run first (misc-pkg provides llama.cpp-svelte-ui).
+
+# GPU backend: "rocm" (RX 7900 XT, libggml0-backend-hip) or "vulkan"
+# (libggml0-backend-vulkan). Drives LLAMA_ARG_DEVICE (ROCm0 / Vulkan0).
+llama_server_backend: rocm
+
+# ---------------------------------------------------------------------------
+# Model (Hugging Face: unsloth/Qwen3.8-27B-GGUF)
+# ---------------------------------------------------------------------------
+
+# quant key into llama_server_quants
+llama_server_quant: Q4_K_M
+
+# Pinned to the revision the checksums below were verified against.
+llama_server_hf_repo: "unsloth/Qwen3.8-27B-GGUF"
+llama_server_hf_revision: "4ca720788d1e01f1bff70c033e0d0028fd02e502"
+llama_server_hf_endpoint: "https://huggingface.co"
+# llama_server_hf_token: ""  # set for gated repos only
+
+llama_server_model_dir: /var/lib/llama-server/models
+
+# Label used in the /etc/default/llama-server header comment only.
+llama_server_profile_label: "Qwen3.8-27B UD"
+
+# quant -> { file, bytes, sha256 }
+llama_server_quants:
+  Q3_K_XL:
+    file: Qwen3.8-27B-UD-Q3_K_XL.gguf
+    bytes: 13146393504
+    sha256: "8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e"
+  Q4_K_S:
+    file: Qwen3.8-27B-UD-Q4_K_S.gguf
+    bytes: 15358213024
+    sha256: "75bc9c8adba2842e72f0ab5201aaa07133c5010b566305c09187fcbdcd364017"
+  Q4_K_M:
+    file: Qwen3.8-27B-UD-Q4_K_M.gguf
+    bytes: 16464440224
+    sha256: "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
+  Q4_K_XL:
+    file: Qwen3.8-27B-UD-Q4_K_XL.gguf
+    bytes: 17559178144
+    sha256: "3f227079003add2511437e5b1e94812e363385225bf6a9b47b0054a72bc8b01e"
+  Q5_K_S:
+    file: Qwen3.8-27B-UD-Q5_K_S.gguf
+    bytes: 18665753504
+    sha256: "d8d62ffcf84d42658dd6ccf9782b4d0404700af78b26d750507510c7597b5bfe"
+
+# Vision projector (mmproj). Downloaded when llama_server_vision is true.
+llama_server_mmproj:
+  file: mmproj-BF16.gguf
+  bytes: 931146432
+  sha256: "83ee4f4f205fa514161778c41df1ea14144faa0f713510893b63c2395f5c2d53"
+
+# ---------------------------------------------------------------------------
+# Runtime tuning (written to /etc/default/llama-server)
+# ---------------------------------------------------------------------------
+
+llama_server_vision: true
+llama_server_mtp: true           # draft-mtp speculative decoding
+llama_server_spec_n_max: 2
+llama_server_ctx_size: 32768
+llama_server_n_gpu_layers: 99
+llama_server_kv_type: q4_0
+llama_server_n_parallel: 1
+llama_server_batch_size: 2048
+llama_server_ubatch_size: 512
+llama_server_alias: qwen3.8-27b
+llama_server_listen_host: 0.0.0.0
+llama_server_listen_port: 8080
+llama_server_endpoint_metrics: true
+# Optional llama.cpp-level API key. The TLS proxy enforces its own Bearer
+# key in nginx; leave empty unless you want a second layer.
+# llama_server_api_key: ""
+
+# ---------------------------------------------------------------------------
+# systemd service
+# ---------------------------------------------------------------------------
+
+# Unit ships with the llama.cpp-services package; the drop-in below adds the
+# device groups so the unprivileged user can open /dev/dri and /dev/kfd.
+llama_server_service_user: _llama-server
+llama_server_service_groups:
+  - render
+  - video
+
+# Health probe target for the /health wait (the server listens on
+# llama_server_listen_host; probe loopback).
+llama_server_health_host: 127.0.0.1
+llama_server_health_retries: 60
+llama_server_health_delay: 5
+
+# ---------------------------------------------------------------------------
+# nginx TLS reverse proxy
+# ---------------------------------------------------------------------------
+
+llama_server_nginx_enable: true
+llama_server_nginx_server_names:
+  - ai.local
+  - kvm.local
+# Bearer key enforced by nginx (not by llama.cpp). LAN-only box; override
+# per-environment if you ever expose this differently.
+llama_server_nginx_bearer_key: "w69oIuVJ0xTsAUR3SdRFIQ3Y6qOoZVdL"
+llama_server_nginx_ui_root: /usr/share/llama.cpp-svelte-ui
+# Self-signed cert, generated when missing (RSA 4096, 10 years).
+llama_server_nginx_ssl_cert: /etc/nginx/ssl/ai.local.crt
+llama_server_nginx_ssl_key: /etc/nginx/ssl/ai.local.key
