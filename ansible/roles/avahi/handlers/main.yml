@@ -11,5 +11,11 @@
     name: avahi-daemon
     state: reloaded
 
+- name: restart avahi-publish units
+  systemd:
+    name: "avahi-publish-{{ item }}.service"
+    state: restarted
+  loop: "{{ avahi_additional_hostnames }}"
+
 
 

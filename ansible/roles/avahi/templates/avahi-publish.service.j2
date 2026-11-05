@@ -1,0 +1,13 @@
+# Managed by Ansible - DO NOT EDIT MANUALLY
+[Unit]
+Description=Publish mDNS A record for {{ avahi_publish_name }}.local
+After=network-online.target avahi-daemon.service
+Wants=network-online.target avahi-daemon.service
+
+[Service]
+ExecStart=/usr/bin/avahi-publish -a -R {{ avahi_publish_name }}.local {{ avahi_lan_ip }}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
