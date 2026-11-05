@@ -27,7 +27,7 @@ libvirt_default_network_state: active
 
 # Bridge for external connectivity (configured in /etc/network/interfaces)
 libvirt_bridge_name: br0
-libvirt_bridge_physical_interface: enp6s0
+libvirt_bridge_physical_interface: enp9s0
 
 # Additional networks
 libvirt_networks:
