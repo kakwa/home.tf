@@ -1,0 +1,5 @@
+---
+- name: Restart ai-power monitor
+  ansible.builtin.systemd:
+    name: ai-power-monitor
+    state: restarted

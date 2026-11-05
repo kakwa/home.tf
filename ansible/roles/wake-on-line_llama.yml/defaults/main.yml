@@ -1,0 +1,40 @@
+---
+# ai-power: Wake-on-LAN + idle hibernation for the physical ai.local host
+#
+# The host runs llama-server directly on 127.0.0.1:8080 (see llama-server
+# role). This role:
+#   1. Persists Wake-on-LAN (ethtool wol) on the configured NICs via a udev
+#      rule, so the host can be woken remotely (magic packet from the
+#      NetBSD proxy, see netbsd-waker role).
+#   2. Installs ai-power-monitor.service, a python3 daemon that polls
+#      llama-server's /metrics endpoint and hibernates the host after
+#      ai_power_idle_timeout seconds without activity.
+#
+# NOTE: BIOS "Wake on LAN" / "Power on by PCI-E" must be enabled manually.
+
+# NICs to enable Wake-on-LAN on (matched by kernel name in the udev rule).
+ai_power_wol_nics:
+  - enp4s0f0
+  - enp9s0
+
+# ethtool wol flags: "g" = magic packet (unicast).
+ai_power_wol_flags: g
+
+# Hibernate when llama-server has been idle for this long (seconds).
+# 900 = 15 minutes.
+ai_power_idle_timeout: 900
+
+# llama-server metrics endpoint (http server, localhost only).
+ai_power_metrics_url: http://127.0.0.1:8080/metrics
+
+# How often to poll the metrics endpoint (seconds).
+ai_power_poll_interval: 30
+
+# State dir/file for the activity baseline (survives hibernate/wake).
+ai_power_state_dir: /var/lib/ai-power
+
+# Where the monitor script lives.
+ai_power_lib_dir: /usr/local/lib/ai-power
+
+# Python interpreter used by the monitor.
+ai_power_python: /usr/bin/python3
