@@ -1,0 +1,105 @@
+---
+# Per-file model lifecycle, invoked via include_tasks from main.yml.
+#
+# `item` (a dict with name/sha256/bytes) is provided by the include_tasks
+# loop in main.yml. The whole stat -> verify -> download -> move sequence is
+# kept inside this included file so that, for each file, every register is
+# produced and consumed within the same iteration. Splitting it into separate
+# top-level loops would let the play-scope registers (ls_model_stat, ...) hold
+# only the last-processed file, so file N's decisions would be evaluated
+# against file N+1's state.
+#
+# Check mode: the `command` module does not execute, so any stdout it would
+# have produced is empty. We therefore derive a "total" (never-erroring) first
+# token with `(... | split | list)[:1] | join` rather than the `first` filter,
+# which raises "No first item, sequence was empty" on an empty sequence. When
+# no real hash is available the derived value is '' and the corruption /
+# mismatch checks become safe no-ops.
+
+- name: Stat model file {{ item.name }}
+  ansible.builtin.stat:
+    path: "{{ llama_server_model_dir }}/{{ item.name }}"
+  register: ls_model_stat
+
+- name: Hash existing model file {{ item.name }}
+  ansible.builtin.command:
+    cmd: sha256sum "{{ llama_server_model_dir }}/{{ item.name }}"
+  register: ls_model_sha
+  changed_when: false
+  when: ls_model_stat.stat.exists
+
+- name: Record actual SHA-256 of {{ item.name }} (empty when not computed)
+  ansible.builtin.set_fact:
+    ls_model_actual_sha: >-
+      {{ (ls_model_sha.stdout | default('') | split | list)[:1] | join | lower }}
+
+- name: Remove corrupt model file {{ item.name }}
+  ansible.builtin.file:
+    path: "{{ llama_server_model_dir }}/{{ item.name }}"
+    state: absent
+  when:
+    - ls_model_stat.stat.exists
+    - ls_model_actual_sha != ''
+    - ls_model_actual_sha != item.sha256
+
+- name: Determine whether {{ item.name }} needs downloading
+  ansible.builtin.set_fact:
+    ls_model_need_download: >-
+      {{ not (ls_model_stat.stat.exists
+              and (ansible_check_mode or ls_model_actual_sha == item.sha256)) }}
+
+- name: Download model file {{ item.name }} (resumable)
+  ansible.builtin.command:
+    cmd: >-
+      {% if llama_server_hf_token | default('') | length > 0 %}
+      curl -fL --retry 5 --retry-delay 3 --retry-all-errors -sS
+      -H "Authorization: Bearer {{ llama_server_hf_token }}"
+      {% else %}
+      curl -fL --retry 5 --retry-delay 3 --retry-all-errors -sS
+      {% endif %}
+      -C - -o "{{ llama_server_model_dir }}/{{ item.name }}.part"
+      "{{ llama_server_hf_endpoint }}/{{ llama_server_hf_repo }}/resolve/{{ llama_server_hf_revision }}/{{ item.name }}"
+  register: ls_model_download
+  changed_when: true
+  when: ls_model_need_download
+
+- name: Verify SHA-256 of downloaded {{ item.name }}.part
+  ansible.builtin.command:
+    cmd: sha256sum "{{ llama_server_model_dir }}/{{ item.name }}.part"
+  register: ls_part_sha
+  changed_when: false
+  when: ls_model_download is changed
+
+- name: Record SHA-256 of downloaded {{ item.name }}.part (empty when not computed)
+  ansible.builtin.set_fact:
+    ls_part_actual_sha: >-
+      {{ (ls_part_sha.stdout | default('') | split | list)[:1] | join | lower }}
+  when: ls_model_download is changed
+
+- name: Fail on SHA-256 mismatch for {{ item.name }}
+  ansible.builtin.fail:
+    msg: >-
+      {{ item.name }}: expected SHA-256 {{ item.sha256 }},
+      got {{ ls_part_actual_sha if ls_part_actual_sha is defined and ls_part_actual_sha else '<no file>' }}
+  when:
+    - ls_model_download is changed
+    - ls_part_actual_sha is defined
+    - ls_part_actual_sha != ''
+    - ls_part_actual_sha != item.sha256
+
+- name: Move {{ item.name }}.part into place
+  ansible.builtin.command:
+    cmd: >-
+      mv -f "{{ llama_server_model_dir }}/{{ item.name }}.part"
+      "{{ llama_server_model_dir }}/{{ item.name }}"
+  register: ls_model_move
+  changed_when: true
+  when: ls_model_download is changed
+
+- name: Set ownership and mode on {{ item.name }}
+  ansible.builtin.file:
+    path: "{{ llama_server_model_dir }}/{{ item.name }}"
+    owner: "{{ llama_server_service_user }}"
+    group: "{{ llama_server_service_user }}"
+    mode: "0644"
+  when: ls_model_move is changed
