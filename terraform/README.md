@@ -4,7 +4,16 @@ OpenTofu/Terraform code to deploy a simple K8S/Talos Cluster
 
 # Item Configured
 
-TODO
+- **Talos base image** — pulled from the [Talos Image Factory](https://factory.talos.dev) into `mid-pool` (`talos-base.qcow2`) with system extensions (default: `binfmt-misc`); version `v1.12.6`, platform `nocloud`/`amd64`.
+- **Debian base image** — Debian 13 (Trixie) cloud `qcow2` into `mid-pool` (`debian-base.qcow2`), used as the utility VM backing store.
+- **Cluster network** — libvirt NAT network `talos-network` (`192.168.100.0/24`), bridged as `virbr1`, autostart + DHCP.
+- **Utility VM** — `utility` (1 GiB RAM, 2 vCPU, `q35`, host-passthrough CPU, 50 GiB `qcow2` backed by the Debian base). Two NICs: one direct-bridged to the LAN (`br0`) with a static IP (`192.168.1.13/24`, gateway `192.168.1.254`, DNS `192.168.1.25`) and one on `talos-network` (DHCP). Optional cloud-init seed (admin user, sudo, authorized keys, `qemu-guest-agent`).
+- **Control-plane VMs** — 3× `talos-cp-*` (2 GiB RAM, 2 vCPU, 100 GiB each, backed by the Talos base).
+- **Worker VMs** — 6× `talos-worker-*` (2 GiB RAM, 2 vCPU, 100 GiB each, backed by the Talos base).
+- **DNS (RFC 2136 + TSIG)** — A records under `int.kakwalab.ovh.`: `utility` (static) plus `-k8s`-suffixed names for the utility and every Talos CP/worker (LAN/cluster IPs). Skipped entirely when `dns_update_server` is empty.
+- **Ansible inventory** — `inventory.yml` (rendered from `inventory.yml.tpl`); each VM's IP resolved in order: libvirt provider → `virsh domifaddr` (`scripts/get-domain-ips.sh`) → static (utility only).
+- **k8s config dir** — `talos-env.sh`, `talos-kubelet-nodeip-patch.yaml`, `talos-worker-lan.examples.yaml`, `metallb-namespace.yaml`, `metallb-lan.yaml`, `traefik-namespace.yaml`, `traefik-helm-values.yaml`, `external-dns-helm-values.yaml` written under `k8s_config_dir` (default `/opt/home.tf/k8s`).
+- **Bootstrap scripts** — `init-talos.sh` (bootstrap cluster + `talosconfig`), `init-traefik.sh` (MetalLB Helm + L2 pool, then Traefik Helm), `init-external-dns.sh` (ExternalDNS Helm, RFC 2136 + TSIG); all consume the generated `k8s_config_dir` artifacts.
 
 # Deploy
 
