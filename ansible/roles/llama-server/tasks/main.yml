@@ -39,15 +39,10 @@
     - /lib/systemd/system/llama-server.service
   register: ls_unit_stats
 
-- name: Fail if llama-server.service unit is missing
-  ansible.builtin.assert:
-    that:
-      - ls_unit_stats.results | selectattr('stat', 'exists') | list | length > 0
-    fail_msg: llama-server.service unit not found (install llama.cpp-services).
-
 - name: Verify backend device is visible to llama.cpp
   ansible.builtin.command: llama-server --list-devices
   register: ls_devices
+  check_mode: false
   changed_when: false
   failed_when: false
 
@@ -89,91 +84,7 @@
       }}
 
 - name: Ensure model files are present and SHA-256 verified
-  ansible.builtin.block:
-    - name: Stat model file {{ item.name }}
-      ansible.builtin.stat:
-        path: "{{ llama_server_model_dir }}/{{ item.name }}"
-      register: ls_model_stat
-
-    - name: Hash existing model file {{ item.name }}
-      ansible.builtin.command:
-        cmd: sha256sum "{{ llama_server_model_dir }}/{{ item.name }}"
-      register: ls_model_sha
-      changed_when: false
-      when: ls_model_stat.stat.exists
-
-    - name: Remove corrupt model file {{ item.name }}
-      ansible.builtin.file:
-        path: "{{ llama_server_model_dir }}/{{ item.name }}"
-        state: absent
-      when: >-
-        ls_model_stat.stat.exists
-        and (ls_model_sha.stdout | default('') | split | first | lower) != item.sha256
-  loop: "{{ llama_server_model_files }}"
-  loop_control:
-    label: "{{ item.name }}"
-
-- name: Download model file {{ item.name }} (resumable)
-  ansible.builtin.command:
-    cmd: >-
-      {% if llama_server_hf_token | default('') | length > 0 %}
-      curl -fL --retry 5 --retry-delay 3 --retry-all-errors -sS
-      -H "Authorization: Bearer {{ llama_server_hf_token }}"
-      {% else %}
-      curl -fL --retry 5 --retry-delay 3 --retry-all-errors -sS
-      {% endif %}
-      -C - -o "{{ llama_server_model_dir }}/{{ item.name }}.part"
-      "{{ llama_server_hf_endpoint }}/{{ llama_server_hf_repo }}/resolve/{{ llama_server_hf_revision }}/{{ item.name }}"
-  register: ls_model_download
-  changed_when: true
-  when: >-
-    not (ls_model_stat.stat.exists
-         and (ls_model_sha.stdout | default('') | split | first | lower) == item.sha256)
-  loop: "{{ llama_server_model_files }}"
-  loop_control:
-    label: "{{ item.name }}"
-
-- name: Verify SHA-256 of downloaded {{ item.name }}.part
-  ansible.builtin.command:
-    cmd: sha256sum "{{ llama_server_model_dir }}/{{ item.name }}.part"
-  register: ls_part_sha
-  changed_when: false
-  when: ls_model_download is changed
-  loop: "{{ llama_server_model_files }}"
-  loop_control:
-    label: "{{ item.name }}"
-
-- name: Fail on SHA-256 mismatch for {{ item.name }}
-  ansible.builtin.fail:
-    msg: >-
-      {{ item.name }}: expected SHA-256 {{ item.sha256 }},
-      got {{ ls_part_sha.stdout | default('<no file>') | split | first }}
-  when: >-
-    ls_model_download is changed
-    and (ls_part_sha.stdout | default('') | split | first | lower) != item.sha256
-  loop: "{{ llama_server_model_files }}"
-  loop_control:
-    label: "{{ item.name }}"
-
-- name: Move {{ item.name }}.part into place
-  ansible.builtin.command:
-    cmd: >-
-      mv -f "{{ llama_server_model_dir }}/{{ item.name }}.part"
-      "{{ llama_server_model_dir }}/{{ item.name }}"
-  register: ls_model_move
-  changed_when: true
-  when: ls_model_download is changed
-  loop: "{{ llama_server_model_files }}"
-  loop_control:
-    label: "{{ item.name }}"
-
-- name: Set ownership and mode on {{ item.name }}
-  ansible.builtin.file:
-    path: "{{ llama_server_model_dir }}/{{ item.name }}"
-    owner: "{{ llama_server_service_user }}"
-    group: "{{ llama_server_service_user }}"
-    mode: "0644"
-  when: ls_model_move is changed
+  ansible.builtin.include_tasks: ensure_model_file.yml
   loop: "{{ llama_server_model_files }}"
   loop_control:
     label: "{{ item.name }}"

@@ -64,9 +64,20 @@
   changed_when: false
   failed_when: false
 
+# In check mode the unit template above does not write the file, so on a
+# first run the unit is not on disk yet and the systemd module's service
+# lookup fails with "Could not find the requested service". Only manage the
+# service when its unit file is actually present. In real mode the template
+# task has just written it, so this is always true there.
+- name: Check whether ai-power-monitor unit exists
+  ansible.builtin.stat:
+    path: /etc/systemd/system/ai-power-monitor.service
+  register: ai_power_unit_stat
+
 - name: Enable and start ai-power monitor
   ansible.builtin.systemd:
     name: ai-power-monitor
     enabled: true
     state: started
     daemon_reload: true
+  when: ai_power_unit_stat.stat.exists
