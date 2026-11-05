@@ -1,0 +1,72 @@
+---
+# ai-power role tasks
+#
+# Order: packages -> state dir -> udev rule (WOL) -> monitor script + unit ->
+# apply WOL now (runtime) -> enable + start monitor.
+
+- name: Install python3 and ethtool
+  ansible.builtin.apt:
+    name:
+      - python3
+      - ethtool
+    state: present
+    update_cache: true
+    install_recommends: no
+
+- name: Create state directory
+  ansible.builtin.file:
+    path: "{{ ai_power_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create monitor script directory
+  ansible.builtin.file:
+    path: "{{ ai_power_lib_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write Wake-on-LAN udev rule
+  ansible.builtin.template:
+    src: ai-power-wol.rules.j2
+    dest: /etc/udev/rules.d/90-ai-power-wol.rules
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Write idle hibernate monitor script
+  ansible.builtin.template:
+    src: ai-power-monitor.py.j2
+    dest: "{{ ai_power_lib_dir }}/monitor.py"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart ai-power monitor
+
+- name: Write ai-power monitor systemd unit
+  ansible.builtin.template:
+    src: ai-power-monitor.service.j2
+    dest: /etc/systemd/system/ai-power-monitor.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart ai-power monitor
+
+# Runtime setting for the current boot; the udev rule covers reboots.
+# never reports changed (ethtool -s is a no-op when already set).
+- name: Apply Wake-on-LAN settings now
+  ansible.builtin.command:
+    cmd: /usr/sbin/ethtool -s {{ item }} wol {{ ai_power_wol_flags }}
+  loop: "{{ ai_power_wol_nics }}"
+  changed_when: false
+  failed_when: false
+
+- name: Enable and start ai-power monitor
+  ansible.builtin.systemd:
+    name: ai-power-monitor
+    enabled: true
+    state: started
+    daemon_reload: true

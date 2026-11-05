@@ -30,7 +30,8 @@
     state: present
     update_cache: true
     install_recommends: false
-  register: ls_packages
+
+- name: Stat llama-server systemd unit
   ansible.builtin.stat:
     path: "{{ item }}"
   loop:

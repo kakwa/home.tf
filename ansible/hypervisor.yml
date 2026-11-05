@@ -19,3 +19,7 @@
       vars:
         terraform_sync_src: "{{ playbook_dir }}/../terraform"
       tags: ["hypervisor", "terraform-sync"]
+    - role: llama-server
+      tags: ["ai", "llama"]
+    - role: wake-on-line_llama
+      tags: ["ai", "power", "wol"]
