@@ -5,6 +5,20 @@
 # Set to empty string to use system hostname
 avahi_hostname: "kvm"
 
+# Additional hostname aliases. Each entry gets a systemd unit that runs
+# `avahi-publish -a` so that <name>.local resolves to this host via mDNS.
+# The daemon already announces an address record for avahi_hostname, so
+# listing it here is redundant but harmless, and keeps the name resolvable
+# if avahi_hostname is later changed.
+avahi_additional_hostnames:
+  - ai
+  - kvm
+
+# LAN IP address published by the avahi-publish units. Leave empty to
+# auto-detect from the host's primary IPv4 address (fact gathering),
+# falling back to ansible_host when facts are unavailable.
+avahi_lan_ip: ""
+
 # Domain to use
 avahi_domain_name: "local"
 
@@ -17,6 +31,3 @@ avahi_packages:
   - avahi-daemon
   - avahi-utils
   - libnss-mdns
-
-
-

@@ -9,11 +9,10 @@ Avahi is the Linux implementation of Apple's Bonjour/Zeroconf. This role configu
 ## Features
 
 - ✅ Installs avahi-daemon and utilities
-- ✅ Announces system hostname as `<hostname>.local` (e.g., `laphroaig.local`)
-- ✅ Creates additional CNAME aliases (e.g., `kvm.local`)
+- ✅ Announces configured hostname as `<hostname>.local` (e.g., `kvm.local`)
+- ✅ Publishes additional hostname aliases (e.g., `ai.local`) as mDNS A records via `avahi-publish`
 - ✅ Enables mDNS resolution in nsswitch.conf
 - ✅ Supports both IPv4 and IPv6
-- ✅ Publishes workstation service for discovery
 
 ## Requirements
 
@@ -24,8 +23,9 @@ Avahi is the Linux implementation of Apple's Bonjour/Zeroconf. This role configu
 ## Role Variables
 
 ### Hostname Configuration
-- `avahi_hostname`: Custom hostname to announce (default: `""` - uses system hostname)
-- `avahi_additional_hostnames`: List of additional CNAME aliases (default: `["kvm"]`)
+- `avahi_hostname`: Primary hostname to announce (default: `"kvm"` - set to `""` to use system hostname)
+- `avahi_additional_hostnames`: List of additional hostname aliases, each resolvable as `<name>.local` (default: `["ai", "kvm"]`). Each entry gets a systemd unit running `avahi-publish -a` that announces an A record for the name
+- `avahi_lan_ip`: LAN IP address published by the alias units. Empty (default) auto-detects the primary IPv4 address from facts, falling back to `ansible_host`
 - `avahi_domain_name`: Domain name to use (default: `"local"`)
 
 ### Network Settings
@@ -65,33 +65,32 @@ Avahi is the Linux implementation of Apple's Bonjour/Zeroconf. This role configu
 
 After running this role, the system will be accessible at:
 
-- `laphroaig.local` (the actual hostname)
-- `kvm.local` (additional alias)
+- `kvm.local` (primary hostname announced by avahi-daemon)
+- `ai.local` (additional alias, same machine)
 
 You can test the configuration:
 
 ```bash
 # Test name resolution
-ping laphroaig.local
 ping kvm.local
+ping ai.local
 
-# Browse available services
+# Browse discovered mDNS entries (services and addresses)
 avahi-browse -at
 
 # Check avahi status
 systemctl status avahi-daemon
 
 # Resolve hostname
-avahi-resolve -n laphroaig.local
 avahi-resolve -n kvm.local
+avahi-resolve -n ai.local
 ```
 
 ## How It Works
 
-1. **avahi-daemon**: Announces the hostname via mDNS multicast (224.0.0.251 for IPv4)
-2. **Service files**: Creates XML service definitions in `/etc/avahi/services/`
-3. **CNAME records**: Additional hostnames are published as CNAME aliases
-4. **NSS integration**: Enables mDNS name resolution via libnss-mdns
+1. **avahi-daemon**: Announces the configured `host-name` via mDNS multicast (224.0.0.251 for IPv4)
+2. **Alias A records**: The daemon only publishes an address record for its own `host-name`. For each entry in `avahi_additional_hostnames`, a systemd unit (`/etc/systemd/system/avahi-publish-<name>.service`) runs `avahi-publish -a -R <name>.local <ip>` to announce an A record, which is what makes `<name>.local` resolve
+3. **NSS integration**: Enables mDNS name resolution via libnss-mdns
 
 ## Network Requirements
 

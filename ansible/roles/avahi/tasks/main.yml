@@ -27,15 +27,43 @@
   notify: restart avahi-daemon
   when: avahi_hostname | length > 0
 
-# Create additional hostname CNAME records
-- name: Create CNAME records for additional hostnames
-  template:
-    src: cname.service.j2
-    dest: "/etc/avahi/services/kvm.service"
+# Publish A records for additional hostnames.
+# avahi-daemon only announces an address record for its own configured
+# host-name, so each additional alias needs its own avahi-publish
+# instance (systemd unit) to make <name>.local resolve to this host.
+- name: Determine LAN IP address to publish
+  ansible.builtin.set_fact:
+    avahi_lan_ip: >-
+      {{ hostvars[inventory_hostname]['ansible_default_ipv4']['address']
+         if hostvars[inventory_hostname]['ansible_default_ipv4'] | default({})
+         else (hostvars[inventory_hostname]['ansible_host'] | default('')) }}
+  when: avahi_lan_ip | default('') | length == 0
+
+- name: Fail when no LAN IP address is available for alias publication
+  ansible.builtin.fail:
+    msg: >-
+      Cannot determine the LAN IP address to publish for mDNS aliases.
+      Set avahi_lan_ip explicitly or enable fact gathering.
+  when: avahi_lan_ip | default('') | length == 0
+
+- name: Create systemd units publishing alias A records
+  vars:
+    avahi_publish_name: "{{ item }}"
+  ansible.builtin.template:
+    src: avahi-publish.service.j2
+    dest: "/etc/systemd/system/avahi-publish-{{ item }}.service"
     owner: root
     group: root
     mode: '0644'
-  notify: restart avahi-daemon
+  loop: "{{ avahi_additional_hostnames }}"
+  notify: restart avahi-publish units
+
+- name: Enable and start avahi-publish units
+  ansible.builtin.systemd:
+    name: "avahi-publish-{{ item }}.service"
+    enabled: true
+    state: started
+  loop: "{{ avahi_additional_hostnames }}"
 
 # Enable NSS mDNS resolution
 - name: Check if nsswitch.conf has mdns
@@ -74,12 +102,16 @@
   async: 5
   poll: 0
 
+- name: Collect reachable mDNS names
+  set_fact:
+    avahi_reachable_names: >-
+      {{ (([avahi_hostname] if avahi_hostname | length > 0 else []) + avahi_additional_hostnames) | unique | list }}
+
 - name: Display avahi configuration summary
   debug:
     msg:
       - "=== Avahi Configuration Summary ==="
-      - "System hostname: {{ system_hostname.stdout }}.local"
-      - ""
+      - "System hostname: {{ system_hostname.stdout }}"
       - "You can now access this system at:"
-      - "  - {{ system_hostname.stdout }}.local"
+      - "{{ avahi_reachable_names | map('regex_replace', '$', '.local') | list | join(', ') }}"
 
