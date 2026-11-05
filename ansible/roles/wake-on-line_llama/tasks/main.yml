@@ -37,7 +37,7 @@
     group: root
     mode: "0644"
 
-- name: Write idle hibernate monitor script
+- name: Write idle sleep monitor script
   ansible.builtin.template:
     src: ai-power-monitor.py.j2
     dest: "{{ ai_power_lib_dir }}/monitor.py"
