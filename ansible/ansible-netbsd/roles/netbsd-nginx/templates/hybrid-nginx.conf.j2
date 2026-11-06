@@ -80,8 +80,8 @@ server {
     root {{ item.static_root }};
     index index.html;
 
-    # API proxy location
-    location /v1/ {
+    # API proxy location (OpenAI-compatible /v1/* plus SvelteKit server endpoints)
+    location ~ ^/(v1/|props|load|unload|slots) {
 {% if item.wake_enabled | default(false) and item.auth_enabled | default(false) %}
         # Basic auth — runs before the wake subrequest
         auth_basic "Restricted Access";
