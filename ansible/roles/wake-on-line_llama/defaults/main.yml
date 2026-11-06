@@ -20,9 +20,36 @@ ai_power_wol_nics:
 # ethtool wol flags: "g" = magic packet (unicast).
 ai_power_wol_flags: g
 
-# systemd sleep action used when idle: "suspend" is suspend-to-RAM (light
-# sleep, quick wake), "hibernate" is suspend-to-disk.
-ai_power_sleep_mode: suspend
+# Sleep mode used when idle. Two families:
+#   Raw /sys/power/state values (written directly, no systemd-sleep):
+#     standby - S1 CPU idle, peripherals stay powered (WOL works out of
+#               the box, no BIOS/firmware sleep state needed)
+#     mem     - S3 suspend-to-RAM (same as "systemctl suspend")
+#     disk    - S4 suspend-to-disk (hibernate)
+#     freeze  - freeze processes only, no hardware sleep
+#   systemd-level (issued via "systemctl <mode>"):
+#     suspend, hibernate, hybrid-sleep, suspend-then-hibernate
+ai_power_sleep_mode: standby
+
+# Stop llama-server before sleeping and restart it after wake. Freeing the
+# GPU's pinned model buffers makes suspend/resume fast and avoids the
+# amdgpu/KFD resume OOM that happens when the model is loaded (see
+# report.md). Set to false to leave llama-server running across sleep
+# (not recommended on this host).
+ai_power_stop_llama_on_sleep: true
+
+# The systemd unit to stop/start around each sleep cycle.
+ai_power_llama_service: llama-server.service
+
+# Memory sleep mode used for "suspend" (written to /sys/power/mem_sleep by
+# systemd before suspending). On this host "deep" needs minutes to enter and
+# leave due to a failing freezer step and an amdgpu/KFD resume error, so the
+# default is "s2idle" (suspend-to-idle):
+#   s2idle  - suspend-to-idle, CPU enters idle states, fastest wake
+#   shallow - S0ix/standby-like state, if the firmware supports it
+#   deep    - suspend-to-RAM (S3), slowest and broken on this host
+# Set to an empty string to leave the kernel's default mode untouched.
+ai_power_mem_sleep: s2idle
 
 # Suspend when llama-server has been idle for this long (seconds).
 # 900 = 15 minutes.
