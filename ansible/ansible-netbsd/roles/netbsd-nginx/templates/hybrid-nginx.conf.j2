@@ -81,16 +81,16 @@ server {
     index index.html;
 
     # API proxy location (OpenAI-compatible /v1/* plus SvelteKit server endpoints)
-    location ~ ^/(v1/|props|load|unload|slots) {
+    location ~ ^/(v1/|props|load|unload|slots|tools) {
 {% if item.wake_enabled | default(false) and item.auth_enabled | default(false) %}
         # Basic auth — runs before the wake subrequest
         auth_basic "Restricted Access";
         auth_basic_user_file /usr/pkg/etc/nginx/.htpasswd.{{ item.name }};
 {% endif %}
 {% if item.wake_enabled | default(false) %}
-        # Wake gate: auth_request always fires, but the waker only wakes
-        # for POST requests (GET requests from PWA service workers are
-        # short-circuited via the X-Wake-Gate header).
+        # Ask the waker to bring the backend up before proxying. Do not
+        # gate on the method: nginx runs auth_request subrequests as GET
+        # even when the original request was a POST.
         auth_request /_wake;
 {% endif %}
 
@@ -133,7 +133,6 @@ server {
         proxy_set_header Content-Length "";
         proxy_set_header X-Original-URI $request_uri;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Wake-Gate "post-only";
         proxy_connect_timeout 5s;
         proxy_read_timeout {{ item.wake_timeout | default(nginx_waker_timeout) }}s;
     }

@@ -41,6 +41,18 @@ ai_power_stop_llama_on_sleep: true
 # The systemd unit to stop/start around each sleep cycle.
 ai_power_llama_service: llama-server.service
 
+# How long to wait for that unit to become fully inactive (no processes left
+# in its cgroup) before sleeping, in seconds. The model unload / GPU flush can
+# take a while. If the timeout expires the monitor sends SIGKILL to the
+# remaining processes and waits ai_power_llama_stop_kill_grace more seconds;
+# if the unit still is not completely down it refuses to sleep and restarts
+# llama-server instead.
+ai_power_llama_stop_timeout: 120
+# How often to re-check the unit while waiting for it to stop, in seconds.
+ai_power_llama_stop_poll_interval: 1
+# Extra time to wait after the SIGKILL escalation, in seconds.
+ai_power_llama_stop_kill_grace: 10
+
 # Memory sleep mode used for "suspend" (written to /sys/power/mem_sleep by
 # systemd before suspending). On this host "deep" needs minutes to enter and
 # leave due to a failing freezer step and an amdgpu/KFD resume error, so the
