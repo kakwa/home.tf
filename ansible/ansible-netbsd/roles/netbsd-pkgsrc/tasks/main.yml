@@ -1,0 +1,36 @@
+---
+- name: Check if pkgsrc already exists
+  stat:
+    path: "{{ pkgsrc_extract_path }}"
+  register: pkgsrc_exists
+
+- name: Checkout pkgsrc with CVS if not present
+  shell: |
+    cd /usr && cvs -d anoncvs.netbsd.org:/cvsroot co pkgsrc
+  args:
+    creates: "{{ pkgsrc_extract_path }}"
+  become: true
+  when: not pkgsrc_exists.stat.exists
+
+#- name: Update pkgsrc with CVS if already present
+#  shell: |
+#    cd {{ pkgsrc_extract_path }} && cvs update -dP
+#  become: true
+#  when: pkgsrc_exists.stat.exists
+#
+#- name: Update vulnerabilities DB
+#  shell: |
+#    /usr/pkg/sbin/pkg_admin -K /usr/pkg/pkgdb fetch-pkg-vulnerabilities
+#  args:
+#    creates: "/usr/pkg/pkgdb/"
+#  become: true
+
+- name: Deploy publish-pkgs script
+  template:
+    src: publish-pkgs.j2
+    dest: "{{ pkgsrc_bin_path }}/publish-pkgs"
+    mode: '0755'
+    owner: root
+    group: wheel
+  become: true
+  when: pkgsrc_deploy_publish_script

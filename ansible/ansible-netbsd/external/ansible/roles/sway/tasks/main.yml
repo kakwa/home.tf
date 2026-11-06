@@ -1,0 +1,98 @@
+---
+- name: Install sway stuff
+  apt:
+      name:
+      - sway
+      - xwayland
+      - python3-i3ipc
+      - swaylock
+      - xdg-desktop-portal-wlr
+      - suckless-tools
+      - pipewire
+      - pipewire-pulse
+      - swayidle
+      - kanshi
+      - wdisplays
+      - wmenu
+      - i3status
+      - gdm3
+
+- name: Install Wallpaper
+  copy:
+    src: kwp.jpg
+    dest: "/usr/share/backgrounds/kwp.jpg"
+    mode: 0644
+    owner: root
+    group: root
+
+- name: Install window switcher script
+  copy:
+    src: sway-window-cycle.py
+    dest: "/usr/local/bin/sway-window-cycle.py"
+    mode: 0755
+    owner: root
+    group: root
+
+- name: Install workspace init script
+  copy:
+    src: sway-workspace-init.py
+    dest: "/usr/local/bin/sway-workspace-init.py"
+    mode: 0755
+    owner: root
+    group: root
+
+- name: Install workspace switcher script
+  copy:
+    src: sway-workspace-cycle.py
+    dest: "/usr/local/bin/sway-workspace-cycle.py"
+    mode: 0755
+    owner: root
+    group: root
+
+- name: Install sway configuration
+  copy:
+    src: config
+    dest: /etc/sway/config
+    mode: 0644
+    owner: root
+    group: root
+
+- name: ensures /etc/sway/config.d dir exists
+  file:
+    path: "/etc/sway/config.d"
+    mode: 0755
+    owner: root
+    group: root
+    state: directory
+
+- name: Install Sway Wallpaper configuration
+  copy:
+    src: 40-sway-background.conf
+    dest: /etc/sway/config.d/40-sway-background.conf
+    mode: 0644
+    owner: root
+    group: root
+
+- name: Install Sway idle configuration
+  copy:
+    src: 50-swayidle.conf
+    dest: /etc/sway/config.d/50-swayidle.conf
+    mode: 0644
+    owner: root
+    group: root
+
+- name: Desktop Configuration
+  copy:
+    src: sway-cust.desktop
+    dest: /usr/share/wayland-sessions/sway-cust.desktop
+    mode: 0644
+    owner: root
+    group: root
+
+- name: Install i3 status configuration
+  ansible.builtin.template:
+    src: templates/i3status.conf
+    dest: /etc/i3status.conf
+    mode: 0644
+    owner: root
+    group: root

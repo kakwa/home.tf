@@ -1,0 +1,89 @@
+<?php
+/*
+ * Tiny Tiny RSS configuration file
+ */
+
+putenv('TTRSS_DB_TYPE=pgsql');
+putenv('TTRSS_DB_HOST={{ ttrss_db_host }}');
+putenv('TTRSS_DB_NAME={{ ttrss_db_name }}');
+putenv('TTRSS_DB_USER={{ ttrss_db_user }}');
+putenv('TTRSS_DB_PASS={{ ttrss_db_password }}');
+
+putenv('TTRSS_DB_PORT={{ ttrss_db_port }}');
+
+putenv('TTRSS_SELF_URL_PATH=https://{{ ttrss_domain }}/');
+
+putenv('TTRSS_FEED_CRYPT_KEY={{ ansible_facts['date_time']['epoch'] | random | string }}');
+
+define('SINGLE_USER_MODE', {{ ttrss_single_user_mode | lower }});
+
+define('SIMPLE_UPDATE_MODE', false);
+
+putenv('TTRSS_PHP_EXECUTABLE=/usr/pkg/bin/php');
+
+putenv('TTRSS_LOCK_DIRECTORY=/var/www/ttrss-data/lock');
+
+putenv('TTRSS_CACHE_DIR=/var/www/ttrss-data/cache');
+
+putenv('TTRSS_ICONS_DIR=/var/www/ttrss-data/feed-icons');
+putenv('TTRSS_ICONS_URL=feed-icons');
+
+define('AUTH_AUTO_CREATE', true);
+define('AUTH_AUTO_LOGIN', false);
+
+define('FORCE_ARTICLE_PURGE', 0);
+
+putenv('TTRSS_SPHINX_SERVER=localhost:9312');
+
+putenv('TTRSS_SPHINX_INDEX=ttrss, delta');
+
+define('ENABLE_REGISTRATION', false);
+putenv('TTRSS_REG_NOTIFY_ADDRESS={{ ttrss_admin_email }}');
+define('REG_MAX_USERS', 10);
+
+define('SESSION_COOKIE_LIFETIME', 86400);
+
+putenv('TTRSS_SMTP_FROM_NAME=Tiny Tiny RSS');
+putenv('TTRSS_SMTP_FROM_ADDRESS={{ ttrss_admin_email }}');
+
+putenv('TTRSS_DIGEST_SUBJECT=[tt-rss] New headlines for {{ ttrss_domain }}');
+
+putenv('TTRSS_DIGEST_SENDER_ADDRESS={{ ttrss_admin_email }}');
+
+define('CHECK_FOR_UPDATES', true);
+
+define('ENABLE_GZIP_OUTPUT', false);
+
+putenv('TTRSS_PLUGINS=auth_internal, note, nfav, bookmarklet, freshapi');
+
+// Enable API access for FreshAPI plugin
+define('ENABLE_API_ACCESS', true);
+
+define('CONFIG_VERSION', 26);
+
+// Admin user configuration
+putenv('TTRSS_ADMIN_USER={{ ttrss_admin_user }}');
+putenv('TTRSS_ADMIN_PASSWORD={{ ttrss_admin_password }}');
+putenv('TTRSS_ADMIN_EMAIL={{ ttrss_admin_email }}');
+
+// Security settings
+define('ALLOW_UNSAFE_AJAX', false);
+define('ALLOW_UNSAFE_FEEDS', false);
+
+// Performance settings
+define('DAEMON_UPDATE_LOGIN_LIMIT', 30);
+define('DAEMON_FEED_LIMIT', 500);
+define('DAEMON_SLEEP_INTERVAL', 60);
+
+// File upload settings
+define('FILE_UPLOAD_MAX_SIZE', 10485760); // 10MB
+
+// Cache settings
+define('CACHE_ENABLE', true);
+define('CACHE_TTL', 3600);
+
+// Logging
+putenv('TTRSS_LOG_DESTINATION=file');
+putenv('TTRSS_LOG_FILE=/var/log/ttrss/ttrss.log');
+?>
+

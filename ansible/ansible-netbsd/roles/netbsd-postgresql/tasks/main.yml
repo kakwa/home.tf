@@ -1,0 +1,85 @@
+---
+- name: Workaround || symlink libicudata.so.75 to libicudata.so.77 if needed
+  file:
+    src: /usr/pkg/lib/libicudata.so.77
+    dest: /usr/pkg/lib/libicudata.so.75
+    state: link
+  when: icu_symlink_workaround | default(false)
+
+- name: Workaround || symlink libicuuc.so.75 to libicuuc.so.77 if needed
+  file:
+    src: /usr/pkg/lib/libicuuc.so.77
+    dest: /usr/pkg/lib/libicuuc.so.75
+    state: link
+  when: icu_symlink_workaround | default(false)
+
+- name: Workaround || symlink libicui18n.so.75 to libicui18n.so.77 if needed
+  file:
+    src: /usr/pkg/lib/libicui18n.so.77
+    dest: /usr/pkg/lib/libicui18n.so.75
+    state: link
+  when: icu_symlink_workaround | default(false)
+
+- name: Install PostgreSQL packages
+  community.general.pkgin:
+    name: "{{ postgresql_packages }}"
+    state: present
+
+- name: Install pgsql init script
+  ansible.builtin.copy:
+    src: /usr/pkg/share/examples/rc.d/pgsql
+    dest: /etc/rc.d/pgsql
+    owner: root
+    group: wheel
+    mode: '0755'
+    remote_src: true
+    force: false
+
+- name: Initialize PostgreSQL database
+  command: /etc/rc.d/pgsql oneinitdb
+  args:
+    creates: /usr/pkg/pgsql/data/postgresql.conf
+  become: true
+
+- name: Start & Enable PostgreSQL service
+  ansible.builtin.service:
+    name: pgsql
+    state: started
+    enabled: true
+  become: true
+
+- name: Build and install py-psycopg2 from pkgsrc
+  ansible.builtin.command: make install
+  args:
+    chdir: "{{ postgresql_psycopg2_pkgsrc_path }}"
+    creates: "{{ postgresql_psycopg2_creates }}"
+  environment:
+    BATCH: "1"
+  become: true
+
+- name: Ensure PostgreSQL users exist
+  postgresql_user:
+    login_user: pgsql
+    name: "{{ item.user }}"
+    password: "{{ item.password }}"
+    state: present
+    login_db: postgres
+  loop: "{{ postgresql_databases }}"
+  when: postgresql_databases | length > 0
+
+- name: Ensure PostgreSQL databases exist with proper owner
+  postgresql_db:
+    login_user: pgsql
+    name: "{{ item.name }}"
+    owner: "{{ item.user }}"
+    state: present
+  loop: "{{ postgresql_databases }}"
+  when: postgresql_databases | length > 0
+
+- name: Ensure public schema ownership
+  postgresql_schema:
+    login_user: pgsql
+    name: "{{ item.name }}"
+    owner: "{{ item.user }}"
+  loop: "{{ postgresql_databases }}"
+  when: postgresql_databases | length > 0

@@ -1,0 +1,33 @@
+- name: Install vim with pkgin
+  community.general.pkgin:
+      name:
+      - vim
+  when: ansible_facts["os_family"] == "NetBSD"
+
+- name: Install vim with apt
+  ansible.builtin.apt:
+      name:
+      - vim
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Install vim with openbsd_pkg (no_x11 + python3 flavor)
+  community.general.openbsd_pkg:
+    name: vim--no_x11-python3
+    state: present
+  when: ansible_facts["os_family"] == "OpenBSD"
+
+- name: ensures /etc/vim/ exists
+  file:
+    path: "/etc/vim"
+    mode: 0755
+    owner: root
+    group: "{{ root_group[ansible_facts['os_family']] }}"
+    state: directory
+
+- name: Install vim configuration
+  copy:
+    src: vimrc
+    dest: /etc/vim/vimrc
+    mode: 0644
+    owner: root
+    group: "{{ root_group[ansible_facts['os_family']] }}"

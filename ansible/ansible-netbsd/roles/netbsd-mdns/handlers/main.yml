@@ -1,0 +1,18 @@
+---
+- name: restart mdnsd
+  ansible.builtin.service:
+    name: mdnsd
+    state: restarted
+  become: true
+
+- name: restart unbound
+  ansible.builtin.service:
+    name: unbound
+    state: restarted
+  become: true
+
+- name: restart mdns-proxy
+  ansible.builtin.service:
+    name: mdns_proxy
+    state: restarted
+  become: true

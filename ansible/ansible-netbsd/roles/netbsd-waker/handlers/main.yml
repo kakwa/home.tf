@@ -1,0 +1,6 @@
+---
+- name: restart waker
+  ansible.builtin.service:
+    name: waker
+    state: restarted
+  become: true

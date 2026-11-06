@@ -1,0 +1,21 @@
+---
+# Standard vhosts: entries using kakwalab-dev-reverse (reverse-proxy-kakwalab-dev-wildcard.conf.j2)
+# are deployed by that role after netbsd-nginx.
+- name: Configure reverse proxy sites
+  ansible.builtin.include_tasks:
+    file: setup_reverse_proxy_site.yml
+    apply:
+      tags:
+        - nginx-vhost
+  loop: >-
+    {{
+      (reverse_proxies | default([]) | rejectattr('template', 'defined') | list)
+      + (reverse_proxies | default([]) | selectattr('template', 'defined')
+         | rejectattr('template', 'equalto', 'reverse-proxy-kakwalab-dev-wildcard.conf.j2') | list)
+    }}
+  loop_control:
+    extended: true
+  when: reverse_proxies is defined
+  tags:
+    - nginx-vhost
+

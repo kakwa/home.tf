@@ -1,0 +1,19 @@
+---
+- name: Configure my personal hosts
+  hosts: localhost
+  become: true
+  connection: local 
+  roles:
+    - repos
+    - repos-desktop
+    - misc-base
+    - misc-desktop
+    - git
+    - users
+    - plymouth
+    - sensors
+    - sway
+    - terminal
+    - vim
+    - zsh
+    - gdb

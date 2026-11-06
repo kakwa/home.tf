@@ -1,0 +1,25 @@
+---
+- name: FreshRSS base installation and setup
+  include_tasks: base.yml
+  tags:
+    - freshrss-base
+
+- name: FreshRSS configuration
+  include_tasks: config.yml
+  tags:
+    - freshrss-config
+
+- name: FreshRSS database initialization
+  include_tasks: db.yml
+  tags:
+    - freshrss-db
+
+- name: FreshRSS user management
+  include_tasks: user.yml
+  tags:
+    - freshrss-user
+
+- name: FreshRSS nginx virtual host configuration
+  include_tasks: vhost.yml
+  tags:
+    - freshrss-vhost

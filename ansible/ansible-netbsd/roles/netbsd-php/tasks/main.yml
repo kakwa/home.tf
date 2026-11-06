@@ -1,0 +1,120 @@
+---
+# PHP stack from pkgsrc only (avoid pkgin binary graphs on minimal NetBSD images)
+
+- name: Build and install PHP from pkgsrc
+  ansible.builtin.command: make install
+  args:
+    chdir: "{{ php_pkgsrc_dir }}"
+    creates: "{{ php_binary }}"
+  environment:
+    BATCH: "1"
+  become: true
+
+- name: Build and install PHP-FPM from pkgsrc
+  ansible.builtin.command: make install
+  args:
+    chdir: "{{ pkgsrc_tree }}/www/php-fpm"
+    creates: "{{ php_fpm_binary }}"
+  environment:
+    BATCH: "1"
+  become: true
+
+- name: Build and install PHP PDO from pkgsrc
+  ansible.builtin.command: make install
+  args:
+    chdir: "{{ pkgsrc_tree }}/databases/php-pdo"
+    creates: "{{ php_config_dir }}/pdo.ini"
+  environment:
+    BATCH: "1"
+  become: true
+
+- name: Build and install PHP PDO PostgreSQL from pkgsrc
+  ansible.builtin.command: make install
+  args:
+    chdir: "{{ pkgsrc_tree }}/databases/php-pdo_pgsql"
+    creates: "{{ php_etc_dir }}/php.d/pdo_pgsql.ini"
+  environment:
+    BATCH: "1"
+  become: true
+
+- name: Build and install PHP intl from pkgsrc
+  ansible.builtin.command: make install
+  args:
+    chdir: "{{ pkgsrc_tree }}/textproc/php-intl"
+    creates: "{{ php_config_dir }}/intl.ini"
+  environment:
+    BATCH: "1"
+  become: true
+
+- name: Build FreshRSS overlay build tools from pkgsrc
+  ansible.builtin.command: make install
+  args:
+    chdir: "{{ pkgsrc_tree }}/{{ item.path }}"
+    creates: "{{ item.creates }}"
+  environment:
+    BATCH: "1"
+  loop: "{{ php_freshrss_pkgsrc_build_tools }}"
+  loop_control:
+    label: "{{ pkgsrc_tree }}/{{ item.path }}"
+  become: true
+
+- name: Build and install PHP curl from pkgsrc
+  ansible.builtin.command: make install
+  args:
+    chdir: "{{ pkgsrc_tree }}/www/php-curl/"
+    creates: "{{ php_config_dir }}/curl.ini"
+  environment:
+    BATCH: "1"
+  become: true
+
+- name: Create PHP-FPM user
+  user:
+    name: "{{ php_fpm_user }}"
+    group: "{{ php_fpm_group }}"
+    home: "{{ php_fpm_user_home }}"
+    shell: /sbin/nologin
+    system: yes
+    create_home: yes
+  become: true
+  when: php_fpm_user_home is defined
+
+- name: Install {{ php_fpm_service }} init script
+  ansible.builtin.copy:
+    src: "/usr/pkg/share/examples/rc.d/{{ php_fpm_service }}"
+    dest: "/etc/rc.d/{{ php_fpm_service }}"
+    owner: root
+    group: wheel
+    mode: '0755'
+    remote_src: true
+    force: false
+
+- name: Configure PHP-FPM pool
+  template:
+    src: php-fpm-pool.conf.j2
+    dest: /usr/pkg/etc/php-fpm.d/www.conf
+    owner: root
+    group: wheel
+    mode: '0644'
+  notify: restart php-fpm
+
+- name: Configure PHP settings
+  template:
+    src: php.ini.j2
+    dest: /usr/pkg/etc/php.ini
+    owner: root
+    group: wheel
+    mode: '0644'
+  notify: restart php-fpm
+
+- name: Add nginx user to www group
+  user:
+    name: nginx
+    groups: www
+    append: yes
+
+- name: Start & Enable PHP-FPM service
+  ansible.builtin.service:
+    name: "{{ php_fpm_service }}"
+    state: started
+    enabled: true
+  become: true

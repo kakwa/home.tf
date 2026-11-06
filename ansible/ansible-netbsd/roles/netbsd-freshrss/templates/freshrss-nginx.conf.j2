@@ -1,0 +1,96 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {{ freshrss_domain }};
+
+    # Redirect HTTP to HTTPS
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name {{ freshrss_domain }};
+
+    http2 on;
+
+    # SSL configuration - use Let's Encrypt if available, otherwise self-signed
+    {% if freshrss_domain in letsencrypt_available_certs %}
+    ssl_certificate /usr/pkg/etc/letsencrypt/live/{{ freshrss_domain }}/fullchain.pem;
+    ssl_certificate_key /usr/pkg/etc/letsencrypt/live/{{ freshrss_domain }}/privkey.pem;
+    {% elif primary_letsencrypt_domain %}
+    ssl_certificate /usr/pkg/etc/letsencrypt/live/{{ primary_letsencrypt_domain }}/fullchain.pem;
+    ssl_certificate_key /usr/pkg/etc/letsencrypt/live/{{ primary_letsencrypt_domain }}/privkey.pem;
+    {% else %}
+    ssl_certificate /usr/pkg/etc/nginx/ssl/selfsigned.crt;
+    ssl_certificate_key /usr/pkg/etc/nginx/ssl/selfsigned.key;
+    {% endif %}
+
+    # Security headers (adjust to your liking)
+    add_header X-Frame-Options SAMEORIGIN;
+    add_header X-Content-Type-Options nosniff;
+    add_header Referrer-Policy no-referrer-when-downgrade;
+    add_header X-XSS-Protection "1; mode=block";
+
+    # Root directory and index files
+    root /usr/pkg/share/freshrss/p;
+    index index.php;
+
+    # Client settings
+    client_max_body_size 16M;
+    client_body_buffer_size 128k;
+
+    # Logging
+    access_log /var/log/nginx/freshrss_access.log;
+    error_log /var/log/nginx/freshrss_error.log;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types
+        text/plain
+        text/css
+        text/xml
+        text/javascript
+        application/javascript
+        application/xml+rss
+        application/json;
+
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    location ~ \.php$ {
+        {% if basic_auth_enabled | default(true) %}
+        auth_basic "FreshRSS Access";
+        auth_basic_user_file /usr/pkg/etc/nginx/.htpasswd_freshrss;
+        {% endif %}
+
+	    # regex to split $uri to $fastcgi_script_name and $fastcgi_path
+	    fastcgi_split_path_info ^(.+\.php)(/.+)$;
+	    # Check that the PHP script exists before passing it
+	    try_files $fastcgi_script_name =404;
+	    # Bypass the fact that try_files resets $fastcgi_path_info
+	    set $path_info $fastcgi_path_info;
+	    fastcgi_param PATH_INFO       $path_info;
+	    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+
+	    # Include the standard fastcgi parameters
+            fastcgi_pass unix:{{ php_fpm_listen }};
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+	    include fastcgi_params;
+    }
+
+    location ~* \.(?:ico|css|js|gif|jpe?g|png|woff2?|eot|ttf|svg|mp4|ogg|webm)$ {
+        expires 6M;
+        access_log off;
+        add_header Cache-Control "public";
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}

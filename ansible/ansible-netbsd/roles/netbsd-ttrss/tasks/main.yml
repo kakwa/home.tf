@@ -1,0 +1,133 @@
+---
+
+- name: Create pkgsrc overlay directory
+  file:
+    path: /usr/pkgsrc/overlay
+    state: directory
+    mode: '0755'
+  become: true
+
+- name: Copy php-tt-rss pkgsrc files to remote server
+  copy:
+    src: php-tt-rss.pkgsrc/
+    dest: /usr/pkgsrc/overlay/php-tt-rss/
+    owner: root
+    group: wheel
+    mode: '0644'
+    directory_mode: '0755'
+  become: true
+
+- name: Build and install TT-RSS from overlay pkgsrc
+  command: make install
+  args:
+    chdir: /usr/pkgsrc/overlay/php-tt-rss
+    creates: /usr/pkg/share/tt-rss
+  become: true
+
+- name: Create TT-RSS data directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ php_fpm_user }}"
+    group: "{{ php_fpm_group }}"
+    mode: '0755'
+  loop:
+    - /var/www/ttrss-data/cache
+    - /var/www/ttrss-data/lock
+    - /var/www/ttrss-data/feed-icons
+    - /var/www/ttrss-data/cache/images
+    - /var/www/ttrss-data/cache/upload
+    - /var/www/ttrss-data/cache/export
+
+- name: Create TT-RSS log directory
+  file:
+    path: /var/log/ttrss
+    state: directory
+    owner: "{{ php_fpm_user }}"
+    group: "{{ php_fpm_group }}"
+    mode: '0755'
+
+- name: Create TT-RSS configuration file
+  template:
+    src: ttrss-config.php.j2
+    dest: /usr/pkg/share/tt-rss/config.php
+    owner: "{{ php_fpm_user }}"
+    group: "{{ php_fpm_group }}"
+    mode: '0640'
+
+- name: Check if tt-rss schema already exists
+  command: >
+    psql
+    -h {{ ttrss_db_host }}
+    -p {{ ttrss_db_port }}
+    -U {{ ttrss_db_user }}
+    -d {{ ttrss_db_name }}
+    -tAc "SELECT * FROM ttrss_version;"
+  register: schema_check
+  changed_when: false
+  environment:
+    PGPASSWORD: "{{ ttrss_db_password }}"
+
+- name: Initialize/upgrade tt-rss DB schema
+  command: >
+    {{ php_binary }} /usr/pkg/share/tt-rss/update.php --update-schema --force-yes
+  args:
+    chdir: /usr/pkg/share/tt-rss
+  become: true
+  ignore_errors: true
+  when: schema_check.stdout == ""
+
+- name: Create TT-RSS admin user
+  ttrss_user:
+    name: "{{ ttrss_admin_user }}"
+    password: "{{ ttrss_admin_password }}"
+    access_level: 10
+    api_enabled: true
+    state: present
+    php_binary: "{{ php_binary }}"
+    ttrss_path: "/usr/pkg/share/tt-rss"
+  become: true
+
+- name: Create TT-RSS htpasswd file for nginx authentication
+  htpasswd:
+    path: /usr/pkg/etc/nginx/.htpasswd_ttrss
+    name: "{{ ttrss_auth_user }}"
+    password: "{{ ttrss_auth_password }}"
+    owner: root
+    group: wheel
+    mode: '0644'
+
+- name: Include SSL certificate detection tasks
+  include_tasks: "{{ playbook_dir }}/roles/netbsd-nginx/tasks/detect_ssl_certificates.yml"
+
+- name: Create TT-RSS nginx configuration
+  template:
+    src: ttrss-nginx.conf.j2
+    dest: /usr/pkg/etc/nginx/sites-available/ttrss
+    owner: root
+    group: wheel
+    mode: '0644'
+  notify: restart nginx
+
+- name: Enable TT-RSS site
+  file:
+    src: /usr/pkg/etc/nginx/sites-available/ttrss
+    dest: /usr/pkg/etc/nginx/sites-enabled/ttrss
+    state: link
+  notify: restart nginx
+
+- name: Create TT-RSS plugins.local directory
+  file:
+    path: /usr/pkg/share/tt-rss/plugins.local
+    state: directory
+    owner: root
+    group: wheel
+    mode: '0755'
+
+- name: Clone FreshAPI plugin
+  git:
+    repo: https://github.com/eric-pierce/freshapi.git
+    dest: /usr/pkg/share/tt-rss/plugins.local/freshapi
+    version: master
+    force: yes
+  become: true

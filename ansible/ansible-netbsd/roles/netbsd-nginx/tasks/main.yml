@@ -1,0 +1,66 @@
+---
+# =============================================================================
+# BASE NGINX SETUP
+# =============================================================================
+
+- name: Include base nginx setup tasks
+  include_tasks: setup_base.yml
+  tags:
+    - nginx-base
+
+# =============================================================================
+# VIRTUAL HOST SETUP
+# =============================================================================
+
+- name: Include default virtual host setup tasks
+  include_tasks: setup_default_vhost.yml
+  tags:
+    - nginx-vhost
+
+- name: Include SSL certificate detection tasks
+  ansible.builtin.include_tasks:
+    file: detect_ssl_certificates.yml
+    apply:
+      tags:
+        - nginx-vhost
+        - nginx-certbot
+        - certbot
+  tags:
+    - nginx-vhost
+    - nginx-certbot
+    - certbot
+
+- name: Include SSL certificate tasks
+  ansible.builtin.include_tasks: setup_ssl.yml
+  tags:
+    - nginx-vhost
+    - nginx-certbot
+    - certbot
+
+- name: Include reverse proxy setup tasks
+  ansible.builtin.include_tasks: setup_reverse_proxies.yml
+  tags:
+    - nginx-vhost
+
+- name: Include static website setup tasks
+  include_tasks: setup_static.yml
+  tags:
+    - nginx-vhost
+
+# =============================================================================
+# LOGROTATE CONFIGURATION
+# =============================================================================
+
+- name: Include logrotate setup tasks
+  include_tasks: setup_logrotate.yml
+  tags:
+    - nginx-logrotate
+
+# =============================================================================
+# SERVICE MANAGEMENT & VALIDATION
+# =============================================================================
+
+- name: Include service management tasks
+  include_tasks: setup_service.yml
+  tags:
+    - nginx-base

@@ -1,0 +1,43 @@
+---
+- name: Install desktop packages
+  apt:
+    name:
+      - android-file-transfer
+      - grimshot
+      - flameshot
+      - firefox
+      - libreoffice
+      - mpv
+      - inkscape
+      - gimp
+      - pavucontrol
+      - geeqie
+      - suckless-tools
+      - spotify-client
+      - discord
+      - slack-desktop
+      - plymouth
+      - plymouth-themes
+      - v4l-utils
+      - prusa-slicer
+      - clang
+      - clang-format
+      - cmake
+      - make
+      - golang
+      - btop
+      - ansible
+      - scc
+      - docker.io
+      - cowbuilder
+      - mock
+      - apt-file
+      - ncal
+    state: present
+    update_cache: true
+- name: Install Astocad if possible
+  apt:
+    name: astocad
+    state: present
+  ignore_errors: yes
+

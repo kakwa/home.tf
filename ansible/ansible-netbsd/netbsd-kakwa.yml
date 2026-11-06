@@ -1,0 +1,172 @@
+---
+- name: NetBSD Server Setup
+  hosts: all
+  become: true
+  vars:
+    # PHP version configuration
+    php_version_major: "8"
+    php_version_minor: "3"
+    php_version_full: "{{ php_version_major }}.{{ php_version_minor }}"
+    php_version_short: "{{ php_version_major }}{{ php_version_minor }}"
+    # Python version configuration
+    python_version_major: "3"
+    python_version_minor: "12"
+    python_version_full: "{{ python_version_major }}.{{ python_version_minor }}"
+    python_version_short: "{{ python_version_major }}{{ python_version_minor }}"
+    # PostgreSQL version configuration
+    postgresql_version_major: "16"
+  roles:
+    - { role: os-release, tags: ["system", "os-release"] }
+    - role: netbsd-pkgin
+      tags: ["system", "netbsd-pkgin"]
+      vars:
+        pkgin_custom_repo_urls:
+          - "https://netbsd.kakwalab.ovh/pkgsrc/packages/NetBSD/sparc64/10/All"
+    - role: netbsd-pkgsrc
+      tags: ["system", "netbsd-pkgsrc"]
+      vars:
+        pkgsrc_deploy_publish_script: true
+        pkgsrc_publish_base_dir: "/var/www/netbsd/pkgsrc/packages"
+    - { role: netbsd-python, tags: ["system", "netbsd-python"] }
+    - { role: vim, tags: ["system", "vim"] }
+    - { role: zsh, tags: ["system", "zsh"] }
+    - { role: netbsd-misc-packages, tags: ["system", "netbsd-misc-packages"] }
+    - { role: netbsd-misc, tags: ["system", "netbsd-misc"] }
+    - role: netbsd-logrotate
+      tags: ["system", "netbsd-logrotate"]
+      vars:
+        logrotate_configs:
+          - name: nginx
+            paths:
+              - /var/log/nginx/*.log
+            options:
+              - daily
+              - rotate 14
+              - compress
+              - delaycompress
+              - notifempty
+              - missingok
+              - sharedscripts
+            postrotate: |
+              if [ -f /var/run/nginx.pid ]; then
+                kill -USR1 $(cat /var/run/nginx.pid)
+              fi
+    - role: netbsd-mdns
+      tags: ["system", "netbsd-mdns"]
+      vars:
+        mdns_enable_unbound_forwarder: true
+        mdns_dns_forwarders: ["192.168.1.25"]
+    - role: netbsd-waker
+      tags: ["service", "netbsd-waker"]
+      vars:
+        # Target host and MAC address of its NIC (required to send the magic packet).
+        waker_target_host: "ai.local"
+        waker_target_mac: "A0:36:9F:5B:38:02"
+    - role: netbsd-llama-ui
+      tags: ["app", "netbsd-llama-ui"]
+    - role: netbsd-nginx
+      tags: ["service", "netbsd-nginx"]
+      vars:
+        nginx_dns_resolvers: ["127.0.0.1"]
+        ssl_email: "{{ vault_letsencrypt_email | default('hostmaster@kakwalab.ovh') }}"
+        # Default page branding
+        nginx_branding: "kakwalab"
+        nginx_page_title: "Welcome in Kakwalab"
+        static_sites:
+          - name: "lens"
+            domain: "lens.kakwalab.ovh"
+            root: "/srv/www/lens"
+            index: "index.html"
+          - name: "sun"
+            domain: "sun.kakwalab.ovh"
+            root: "/srv/www/sun"
+            index: "index.html"
+          - name: "netbsd"
+            domain: "netbsd.kakwalab.ovh"
+            root: "/var/www/netbsd"
+            autoindex: true
+            index: ""
+        reverse_proxies:
+          - name: "voron0"
+            domain: "voron0.kakwalab.ovh"
+            upstream: "https://voron0.local/"
+            ssl_verify: false
+            auth_enabled: true
+            auth_user: "kakwa"
+            auth_password: "{{ vault_proxy_password | default(lookup('password', './proxy.password.txt chars=ascii_letters,digits length=16')) }}"
+            websocket_path: "/websocket"
+          - name: "ender3"
+            domain: "ender3.kakwalab.ovh"
+            upstream: "https://ender3.local/"
+            ssl_verify: false
+            auth_enabled: true
+            auth_user: "kakwa"
+            auth_password: "{{ vault_proxy_password | default(lookup('password', './proxy.password.txt chars=ascii_letters,digits length=16')) }}"
+            websocket_path: "/websocket"
+          - name: "rockrobo"
+            domain: "rockrobo.kakwalab.ovh"
+            upstream: "http://rockrobo.local/"
+            ssl_verify: true
+            auth_enabled: true
+            auth_user: "kakwa"
+            auth_password: "{{ vault_proxy_password | default(lookup('password', './proxy.password.txt chars=ascii_letters,digits length=16')) }}"
+          - name: "ai"
+            domain: "ai.kakwalab.ovh"
+            upstream: "https://ai.local/"
+            ssl_verify: false
+            # Wake ai.local through netbsd-waker before proxying
+            wake_enabled: true
+            # Streaming (SSE) support for OpenAI-compatible API responses
+            streaming: true
+            # API key auth: clients must send "Authorization: Bearer <api_key>"
+            api_key_auth_enabled: true
+            api_key: "{{ vault_ai_api_key | default(lookup('password', './ai.apikey.txt chars=ascii_letters,digits length=32')) }}"
+          - name: "chat"
+            domain: "chat.kakwalab.ovh"
+            upstream: "https://ai.local/"
+            ssl_verify: false
+            # Hybrid mode: static SvelteKit UI served locally, /v1/* proxied
+            template: "hybrid-nginx.conf.j2"
+            static_root: "/usr/pkg/share/llama.cpp-svelte-ui"
+            # Wake ai.local through netbsd-waker before proxying
+            wake_enabled: true
+            # Streaming (SSE) support
+            streaming: true
+            # Backend (ai.local) API key: sent as "Authorization: Bearer <key>"
+            # when proxying; clients only need Basic auth
+            upstream_api_key: "{{ vault_ai_api_key | default(lookup('password', './ai.apikey.txt chars=ascii_letters,digits length=32')) }}"
+            # Basic auth (same credentials as the other vhosts)
+            auth_enabled: true
+            auth_user: "kakwa"
+            auth_password: "{{ vault_proxy_password | default(lookup('password', './proxy.password.txt chars=ascii_letters,digits length=16')) }}"
+    - role: kakwalab-dev-reverse
+      tags: ["service", "netbsd-nginx", "kakwalab-dev-reverse"]
+      vars:
+        ssl_email: "{{ vault_letsencrypt_email | default('hostmaster@kakwalab.ovh') }}"
+        letsencrypt_ovh_application_key: "{{ vault_docker_registry_ovh_application_key | default(lookup('file', playbook_dir ~ '/ovh_dns_application_key.txt') | trim, true) }}"
+        letsencrypt_ovh_application_secret: "{{ vault_docker_registry_ovh_application_secret | default(lookup('file', playbook_dir ~ '/ovh_dns_application_secret.txt') | trim, true) }}"
+        letsencrypt_ovh_consumer_key: "{{ vault_docker_registry_ovh_consumer_key | default(lookup('file', playbook_dir ~ '/ovh_dns_consumer_key.txt') | trim, true) }}"
+    - role: netbsd-postgresql
+      tags: ["service", "netbsd-postgresql"]
+      vars:
+        postgresql_databases:
+          - name: "freshrss"
+            user: "freshrss"
+            password: "{{ vault_dbfreshrss_password | default(lookup('password', './freshrss_db.password.txt chars=ascii_letters,digits length=16')) }}"
+    - role: netbsd-php
+      tags: ["app", "netbsd-php"]
+      vars:
+        php_fpm_user_home: "/var/www/freshrss-data"
+    - role: netbsd-freshrss
+      tags: ["app", "netbsd-freshrss"]
+      vars:
+        basic_auth_enabled: false
+        freshrss_domain: "rss.kakwalab.ovh"
+        freshrss_db_name: "freshrss"
+        freshrss_db_user: "freshrss"
+        freshrss_db_password: "{{ vault_dbfreshrss_password | default(lookup('password', './freshrss_db.password.txt chars=ascii_letters,digits length=16')) }}"
+        freshrss_admin_user: "kakwa"
+        freshrss_admin_password: "{{ vault_proxy_password | default(lookup('password', './proxy.password.txt chars=ascii_letters,digits length=16')) }}"
+        freshrss_admin_email: "admin@kakwalab.ovh"
+        freshrss_auth_user: "kakwa"
+        freshrss_auth_password: "{{ vault_proxy_password | default(lookup('password', './proxy.password.txt chars=ascii_letters,digits length=16')) }}"

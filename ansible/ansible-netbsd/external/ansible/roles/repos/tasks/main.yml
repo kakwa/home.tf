@@ -1,0 +1,53 @@
+- name: Add slack-discord-misc-pkg repository
+  ansible.builtin.deb822_repository:
+    name: slack-discord-misc-pkg
+    types: deb
+    uris: https://kakwa.github.io/slack-discord-misc-pkg/deb.stable.amd64/
+    suites: stable
+    components: main
+    architectures: amd64
+    signed_by: https://kakwa.github.io/slack-discord-misc-pkg/GPG-KEY.pub
+
+- name: Add kakwalab-pkg repository
+  ansible.builtin.deb822_repository:
+    name: kakwalab-pkg
+    types: deb
+    uris: https://kakwa.github.io/kakwalab-pkg/deb.{{ ansible_facts['lsb']['codename'] }}.amd64/
+    suites: "{{ ansible_facts['lsb']['codename'] }}"
+    components: main
+    architectures: amd64
+    signed_by: https://kakwa.github.io/kakwalab-pkg/GPG-KEY.pub
+
+- name: Add misc-pkg repository
+  ansible.builtin.deb822_repository:
+    name: misc-pkg
+    types: deb
+    uris: https://kakwa.github.io/misc-pkg/deb.{{ ansible_facts['lsb']['codename'] }}.amd64/
+    suites: "{{ ansible_facts['lsb']['codename'] }}"
+    components: main
+    architectures: amd64
+    signed_by: https://kakwa.github.io/misc-pkg/GPG-KEY.pub
+
+- name: Add debian-rpm-build-tools repository
+  ansible.builtin.deb822_repository:
+    name: debian-rpm-build-tools
+    types: deb
+    uris: https://kakwa.github.io/debian-rpm-build-tools/deb.{{ ansible_facts['lsb']['codename'] }}.amd64/
+    suites: "{{ ansible_facts['lsb']['codename'] }}"
+    components: main
+    architectures: amd64
+    signed_by: https://kakwa.github.io/debian-rpm-build-tools/GPG-KEY.pub
+
+- name: Add opentofu repository
+  ansible.builtin.deb822_repository:
+    name: opentofu
+    types: deb
+    uris: https://packages.opentofu.org/opentofu/tofu/any/
+    suites: "any"
+    components: main
+    architectures: amd64
+    signed_by: https://packages.opentofu.org/opentofu/tofu/gpgkey
+
+- name: Update apt cache after configuring repositories
+  ansible.builtin.apt:
+    update_cache: true

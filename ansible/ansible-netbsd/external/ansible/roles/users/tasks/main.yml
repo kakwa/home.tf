@@ -1,0 +1,56 @@
+---
+- name: Install zsh (and accessories) with pkgin
+  community.general.pkgin:
+      name:
+      - zsh
+      - sudo
+  when: ansible_facts["os_family"] == "NetBSD"
+
+- name: Install zsh (and accessories) with apt
+  ansible.builtin.apt:
+      name:
+      - zsh
+      - sudo
+      state: present
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Ensure group "docker" exists (service group)
+  ansible.builtin.group:
+    name: docker
+    state: present
+    system: true
+
+- name: Ensure group "carpenti" exists with correct gid
+  ansible.builtin.group:
+    name: carpenti
+    state: present
+    gid: 1002
+
+
+- name: Add the user 'carpenti' with a specific uid and a primary group of 'admin'
+  ansible.builtin.user:
+    name: carpenti
+    comment: Carpenti
+    uid: 1002
+    group: carpenti
+    shell: "{{ zsh[ansible_facts['os_family']]['zsh_path'] }}"
+    home: /home/carpenti
+    create_home: true
+    groups: "{{ carpenti_groups | default(user_groups[ansible_facts['os_family']]['carpenti'] | default([])) }}"
+
+- name: Ensure group "kakwa" exists with correct gid
+  ansible.builtin.group:
+    name: kakwa
+    state: present
+    gid: 1001
+
+- name: Add the user 'kakwa' with a specific uid and a primary group of 'admin'
+  ansible.builtin.user:
+    name: kakwa
+    comment: Kakwa
+    uid: 1001
+    group: kakwa
+    shell: "{{ zsh[ansible_facts['os_family']]['zsh_path'] }}"
+    home: /home/kakwa
+    create_home: true
+    groups: "{{ kakwa_groups | default(user_groups[ansible_facts['os_family']]['kakwa'] | default([])) }}"

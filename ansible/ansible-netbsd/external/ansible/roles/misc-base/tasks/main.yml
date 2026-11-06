@@ -1,0 +1,18 @@
+---
+- name: Install base packages
+  apt:
+    name:
+      - unattended-upgrades
+      - rsync
+      - btop
+      - psmisc
+      - screen
+      - tmux
+      - tree
+      - zsh
+      - fwupd
+      - nmap
+      - tcpdump
+      - systemd-timesyncd
+    state: present
+    update_cache: yes

@@ -1,0 +1,7 @@
+---
+- name: Configure static websites
+  include_tasks: setup_static_site.yml
+  loop: "{{ static_sites }}"
+  loop_control:
+    extended: true
+  when: static_sites is defined

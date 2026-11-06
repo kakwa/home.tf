@@ -169,14 +169,51 @@ def systemctl(service, verb):
     return True
 
 
+# Handle for the in-flight fire-and-forget `systemctl stop` so the main loop
+# can reap it once it finishes without ever blocking the sleep call.
+_stop_proc = None
+
+
+def start_llama_stop():
+    """Ask llama-server to stop without waiting for it to exit.
+
+    `systemctl stop` blocks until the unit is fully stopped, which can take a
+    while (model unload / GPU flush on shutdown). We launch it and return
+    immediately so the host can enter the sleep state right away; systemd
+    keeps the stop job going (frozen with the rest of the system while asleep,
+    resumed on wake) and will order any later start after it completes."""
+    global _stop_proc
+    try:
+        _stop_proc = subprocess.Popen(
+            ["systemctl", "stop", LLAMA_SERVICE],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as exc:
+        log("systemctl stop %s failed to launch: %s" % (LLAMA_SERVICE, exc))
+        _stop_proc = None
+    log("systemctl stop %s (fire-and-forget)" % LLAMA_SERVICE)
+
+
+def reap_llama_stop():
+    """Reap the fire-and-forget stop process if it has already finished.
+
+    Non-blocking: only collects the child once it has exited, so it never
+    delays polling. Called once per loop iteration to avoid a zombie
+    accumulating on every sleep cycle."""
+    global _stop_proc
+    if _stop_proc is not None and _stop_proc.poll() is not None:
+        _stop_proc = None
+
+
 def sleep_cycle():
-    """One full sleep cycle: stop llama-server (if configured), put the host
-    to sleep, then restart llama-server (if configured) after wake. Returns
-    True if the sleep call itself completed. llama-server is always
-    restarted after the attempt, even if the sleep failed, so the host is
-    left in its previous state."""
+    """One full sleep cycle: ask llama-server to stop (fire-and-forget, if
+    configured), put the host to sleep immediately, then restart llama-server
+    after wake. Returns True if the sleep call itself completed. llama-server
+    is always restarted after the attempt, even if the sleep failed, so the
+    host is left in its previous state."""
     if STOP_LLAMA_ON_SLEEP:
-        systemctl(LLAMA_SERVICE, "stop")
+        start_llama_stop()
     ok = sleep_host()
     if STOP_LLAMA_ON_SLEEP:
         systemctl(LLAMA_SERVICE, "start")
@@ -218,6 +255,8 @@ def main():
     last_status_log = 0.0
     while True:
         now = time.time()
+        # Reap a finished fire-and-forget stop (non-blocking).
+        reap_llama_stop()
         # Adopt a fresher baseline written by another instance (e.g. a manual
         # `--now` run) so we don't immediately re-trigger a sleep right after
         # it woke the host. Only the most recent activity is ever kept.
@@ -259,6 +298,9 @@ def main():
             state["last_activity"] = time.time()
             save_state(state)
             last_status_log = 0.0
+            # Skip the trailing sleep so the first post-resume poll and status
+            # log happen immediately instead of waiting a full POLL_INTERVAL.
+            continue
         time.sleep(POLL_INTERVAL)
 
 

@@ -1,0 +1,5 @@
+$NetBSD$
+
+BLAKE2s (FreshRSS-1.28.0.tar.gz) = 61adad690628e0b6af61f7225dace1da06f19beb4310c9b073b3eb45fee2e33f
+SHA512 (FreshRSS-1.28.0.tar.gz) = 7b5a9fe30edd2e86baad7bae16d960a9e9e8bf335f2b53e44e85ba6fac68b423fba2de4521385e78fc232095fd6db35d90115c6c9df7e68e58f51313bb22dd1d
+Size (FreshRSS-1.28.0.tar.gz) = 4725937 bytes

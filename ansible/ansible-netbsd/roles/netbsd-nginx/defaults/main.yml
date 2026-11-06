@@ -1,0 +1,96 @@
+---
+# Python version configuration (can be overridden at playbook level)
+python_version_major: "3"
+python_version_minor: "12"
+python_version_full: "{{ python_version_major }}.{{ python_version_minor }}"
+python_version_short: "{{ python_version_major }}{{ python_version_minor }}"
+
+# Derived Python package names
+python_binary: "python{{ python_version_short }}"
+python_package_prefix: "py{{ python_version_short }}"
+python_site_packages: "/usr/pkg/lib/python{{ python_version_major }}.{{ python_version_minor }}/site-packages"
+
+# pkgsrc tree (same layout as netbsd-pkgsrc: /usr/pkgsrc)
+pkgsrc_tree: /usr/pkgsrc
+
+# Order: deps first, www/nginx last. Override paths if your tree differs.
+nginx_pkgsrc_build_targets:
+  - { path: devel/zlib, creates: /usr/pkg/include/zlib.h }
+  - { path: devel/pcre2, creates: /usr/pkg/include/pcre2.h }
+  - { path: security/py-passlib, creates: "{{ python_site_packages }}/passlib/__init__.py" }
+  - { path: security/py-certbot-nginx, creates: "{{ python_site_packages }}/certbot_nginx/__init__.py" }
+  - { path: www/nginx, creates: /usr/pkg/sbin/nginx }
+
+# SSL configuration
+ssl_email: "admin@example.com"
+ssl_staging: false
+letsencrypt_request_enabled: false
+# pkgsrc py-certbot installs the CLI as certbot-<major>.<minor> (e.g. /usr/pkg/bin/certbot-3.12).
+certbot_binary: "/usr/pkg/bin/certbot-{{ python_version_full }}"
+
+# Static website configurations (empty by default)
+static_sites: []
+
+# Reverse proxy configurations (empty by default)
+reverse_proxies: []
+
+# Default reverse proxy settings
+reverse_proxy_defaults:
+  ssl_verify: true  # Set to false to disable SSL certificate verification for HTTPS backends
+
+# Optional on-demand wake hook (used with the netbsd-waker role).
+# Set "wake_enabled: true" on a reverse_proxies entry to call this endpoint
+# from an auth_request subrequest before proxying. The request is delayed
+# until the endpoint returns 2xx (host awake) or fails.
+nginx_waker_url: "http://127.0.0.1:8099/wake"
+nginx_waker_timeout: 120  # seconds
+
+# Nginx configuration
+nginx_worker_processes: "auto"
+nginx_worker_connections: 1024
+nginx_keepalive_timeout: 65
+nginx_client_max_body_size: "100M"
+
+# Security settings
+nginx_hide_server_tokens: true
+nginx_ssl_protocols: "TLSv1.2 TLSv1.3"
+nginx_ssl_ciphers: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384"
+nginx_ssl_prefer_server_ciphers: "on"
+
+# DNS resolution settings for dynamic upstream resolution
+# For .local domains (mDNS), include localhost resolver (127.0.0.1)
+# This requires the netbsd-mdns role to be configured with unbound forwarding enabled
+nginx_dns_resolvers: ["127.0.0.1", "8.8.8.8", "8.8.4.4"]
+nginx_dns_valid_time: "10s"  # Shorter cache for .local domains
+nginx_dns_timeout: "5s"
+nginx_dns_ipv6: false
+
+# Default virtual host configuration
+default_vhost_enabled: true
+default_vhost_server_name: "_"  # Catch-all server name
+default_vhost_root: "/usr/pkg/share/nginx/html"
+default_vhost_index: "index.html index.htm"
+default_vhost_error_pages_root: "/usr/pkg/share/nginx"
+default_vhost_access_log: "/var/log/nginx/default_access.log"
+default_vhost_error_log: "/var/log/nginx/default_error.log"
+default_vhost_ssl_enabled: true
+default_vhost_ssl_cert: "/usr/pkg/etc/nginx/ssl/selfsigned.crt"
+default_vhost_ssl_key: "/usr/pkg/etc/nginx/ssl/selfsigned.key"
+
+# Branding customization for default pages and error pages
+# Set these variables in your playbook to customize the branding
+# Example for KakwaLab:
+#   nginx_branding: "KakwaLab (c) 2025"
+#   nginx_page_title: "KakwaLab Server"
+nginx_branding: "NetBSD • nginx"  # Default branding shown at bottom of pages
+nginx_page_title: "Welcome to nginx on NetBSD"  # Title for default index page
+
+# Nginx monitoring configuration
+nginx_cron_monitoring_enabled: true  # Enable periodic nginx status check and restart
+
+# Logrotate configuration for nginx logs
+nginx_logrotate_enabled: true
+nginx_logrotate_frequency: "daily"
+nginx_logrotate_rotate_count: 14
+nginx_logrotate_compress: true
+nginx_logrotate_delaycompress: true
