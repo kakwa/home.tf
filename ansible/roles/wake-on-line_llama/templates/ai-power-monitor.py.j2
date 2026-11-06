@@ -6,15 +6,31 @@ Polls llama-server's Prometheus /metrics endpoint (localhost only).
 Activity is movement of the monotonic llamacpp:tokens_predicted_total
 counter, or any in-flight request (llamacpp:requests_processing /
 llamacpp:requests_deferred > 0). When neither happens for IDLE_TIMEOUT
-seconds, the host is suspended via "systemctl suspend".
+seconds, the host is put to sleep.
+
+Sleep modes:
+  Raw /sys/power/state values ("standby", "mem", "disk", "freeze") are
+  written directly to /sys/power/state. "standby" (S1) puts only the CPU
+  to idle, leaving peripherals fully powered, so Wake-on-LAN works without
+  any firmware help.
+  systemd-level modes ("suspend", "hibernate", etc.) are issued via
+  "systemctl <mode>".
 
 The activity baseline (last-seen counter value + last-activity timestamp)
 is persisted to STATE_FILE so the idle clock survives service restarts.
 A counter value lower than the saved one means llama-server restarted
 (zeroed counters, e.g. after wake from sleep); the clock restarts
 from now in that case.
+
+By default llama-server is stopped before sleeping and restarted after
+wake (STOP_LLAMA_ON_SLEEP), so the GPU's pinned model buffers are released
+and suspend/resume is fast.
+
+Run with --now to perform one immediate sleep cycle (stop llama-server,
+sleep, wake, restart llama-server) and exit, ignoring the idle timeout.
 """
 
+import argparse
 import json
 import os
 import re
@@ -29,6 +45,12 @@ POLL_INTERVAL = {{ ai_power_poll_interval }}
 STATUS_LOG_INTERVAL = {{ ai_power_status_log_interval }}
 SLEEP_MODE = "{{ ai_power_sleep_mode }}"
 STATE_FILE = "{{ ai_power_state_dir }}/state.json"
+
+# Stop llama-server before sleeping and restart it after wake. Freeing the
+# GPU's pinned model buffers makes suspend/resume fast and avoids the
+# amdgpu/KFD resume OOM seen when the model is loaded (see report.md).
+STOP_LLAMA_ON_SLEEP = {{ ai_power_stop_llama_on_sleep }}
+LLAMA_SERVICE = "{{ ai_power_llama_service }}"
 
 # Single monotonic activity counter. tokens_predicted_total only ever
 # increases within a llama-server run (reset on restart), so a drop
@@ -99,15 +121,66 @@ def save_state(state):
     os.replace(tmp, STATE_FILE)
 
 
+# Raw /sys/power/state values that can be written directly, bypassing
+# systemd-sleep entirely.
+RAW_STATES = ("freeze", "standby", "mem", "disk")
+
+
 def sleep_host():
-    """Suspend/hibernate the host. Return True if the call completed."""
-    log("sleeping (systemctl %s)" % SLEEP_MODE)
-    try:
-        subprocess.run(["systemctl", SLEEP_MODE], check=True)
-    except Exception as exc:
-        log("systemctl %s failed: %s" % (SLEEP_MODE, exc))
-        return False
+    """Put the host to sleep. Return True if the call completed."""
+    if SLEEP_MODE in RAW_STATES:
+        log("sleeping (%s via /sys/power/state)" % SLEEP_MODE)
+        try:
+            with open("/sys/power/state", "w") as f:
+                f.write(SLEEP_MODE)
+        except Exception as exc:
+            log("/sys/power/state write '%s' failed: %s" % (SLEEP_MODE, exc))
+            return False
+    else:
+        log("sleeping (systemctl %s)" % SLEEP_MODE)
+        try:
+            subprocess.run(["systemctl", SLEEP_MODE], check=True)
+        except Exception as exc:
+            log("systemctl %s failed: %s" % (SLEEP_MODE, exc))
+            return False
     return True
+
+
+def systemctl(service, verb):
+    """Best-effort `systemctl <verb> <service>`. Returns True on success."""
+    try:
+        subprocess.run(
+            ["systemctl", verb, service],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        log(
+            "systemctl %s %s failed (rc=%s): %s"
+            % (verb, service, exc.returncode, detail or exc)
+        )
+        return False
+    except Exception as exc:
+        log("systemctl %s %s failed: %s" % (verb, service, exc))
+        return False
+    log("systemctl %s %s" % (verb, service))
+    return True
+
+
+def sleep_cycle():
+    """One full sleep cycle: stop llama-server (if configured), put the host
+    to sleep, then restart llama-server (if configured) after wake. Returns
+    True if the sleep call itself completed. llama-server is always
+    restarted after the attempt, even if the sleep failed, so the host is
+    left in its previous state."""
+    if STOP_LLAMA_ON_SLEEP:
+        systemctl(LLAMA_SERVICE, "stop")
+    ok = sleep_host()
+    if STOP_LLAMA_ON_SLEEP:
+        systemctl(LLAMA_SERVICE, "start")
+    return ok
 
 
 def log_status(state, inflight, idle, remaining):
@@ -145,6 +218,12 @@ def main():
     last_status_log = 0.0
     while True:
         now = time.time()
+        # Adopt a fresher baseline written by another instance (e.g. a manual
+        # `--now` run) so we don't immediately re-trigger a sleep right after
+        # it woke the host. Only the most recent activity is ever kept.
+        disk = load_state()
+        if disk["last_activity"] > state["last_activity"]:
+            state["last_activity"] = disk["last_activity"]
         inflight = None
         text = fetch_metrics()
         if text is not None:
@@ -172,7 +251,7 @@ def main():
 
         if idle >= IDLE_TIMEOUT:
             log("idle timeout reached (idle=%ds): starting %s" % (int(idle), SLEEP_MODE))
-            if sleep_host():
+            if sleep_cycle():
                 log("resumed from %s" % SLEEP_MODE)
             # Reset the idle clock whether or not sleep succeeded: after a
             # resume we must not sleep again immediately, and after a
@@ -183,8 +262,40 @@ def main():
         time.sleep(POLL_INTERVAL)
 
 
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        prog="ai-power-monitor",
+        description="Put the host to sleep when llama-server goes idle.",
+    )
+    parser.add_argument(
+        "--now",
+        action="store_true",
+        help="sleep immediately (one-shot) and exit, ignoring the idle timeout",
+    )
+    return parser.parse_args(argv)
+
+
+def run_now():
+    """Perform a single immediate sleep cycle and record a fresh baseline so a
+    concurrently running daemon does not re-trigger a sleep right after."""
+    log("manual --now: starting immediate %s" % SLEEP_MODE)
+    ok = sleep_cycle()
+    if ok:
+        log("manual --now: resumed from %s" % SLEEP_MODE)
+    else:
+        log("manual --now: %s did not complete" % SLEEP_MODE)
+    state = load_state()
+    state["last_activity"] = time.time()
+    state["counter"] = None
+    save_state(state)
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
+    args = parse_args(sys.argv[1:])
     try:
+        if args.now:
+            sys.exit(run_now())
         main()
     except KeyboardInterrupt:
         sys.exit(0)

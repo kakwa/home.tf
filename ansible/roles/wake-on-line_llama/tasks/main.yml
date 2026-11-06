@@ -29,6 +29,32 @@
     group: root
     mode: "0755"
 
+- name: Fail on unknown ai_power_mem_sleep mode
+  ansible.builtin.assert:
+    that:
+      - ai_power_mem_sleep in ['', 's2idle', 'shallow', 'deep']
+    fail_msg: >-
+      ai_power_mem_sleep must be "s2idle", "shallow", "deep" or empty
+      (got "{{ ai_power_mem_sleep }}").
+
+- name: Create systemd sleep.conf drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/sleep.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# systemd-sleep reads this drop-in on every suspend, so no daemon reload is
+# needed; the next `systemctl suspend` picks the new mode up automatically.
+- name: Configure systemd suspend memory sleep mode
+  ansible.builtin.template:
+    src: ai-power-sleep.conf.j2
+    dest: /etc/systemd/sleep.conf.d/90-ai-power.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Write Wake-on-LAN udev rule
   ansible.builtin.template:
     src: ai-power-wol.rules.j2
