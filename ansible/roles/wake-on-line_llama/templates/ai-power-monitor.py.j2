@@ -24,7 +24,10 @@ from now in that case.
 
 By default llama-server is stopped before sleeping and restarted after
 wake (STOP_LLAMA_ON_SLEEP), so the GPU's pinned model buffers are released
-and suspend/resume is fast.
+and suspend/resume is fast. The monitor polls the unit until it is fully
+inactive and its cgroup is empty before writing to /sys/power/state; if it
+cannot confirm a complete shutdown (escalating to SIGKILL after
+LLAMA_STOP_TIMEOUT) it refuses to sleep.
 
 Run with --now to perform one immediate sleep cycle (stop llama-server,
 sleep, wake, restart llama-server) and exit, ignoring the idle timeout.
@@ -51,6 +54,21 @@ STATE_FILE = "{{ ai_power_state_dir }}/state.json"
 # amdgpu/KFD resume OOM seen when the model is loaded (see report.md).
 STOP_LLAMA_ON_SLEEP = {{ ai_power_stop_llama_on_sleep }}
 LLAMA_SERVICE = "{{ ai_power_llama_service }}"
+
+# How long to wait for `systemctl stop` to finish (the model unload / GPU
+# flush can take a while), how often to re-check, and how long to wait after
+# escalating to SIGKILL if the service still is not gone.
+LLAMA_STOP_TIMEOUT = {{ ai_power_llama_stop_timeout }}
+LLAMA_STOP_POLL_INTERVAL = {{ ai_power_llama_stop_poll_interval }}
+LLAMA_STOP_KILL_GRACE = {{ ai_power_llama_stop_kill_grace }}
+
+# Unit cgroup locations: cgroup v2, hybrid unified hierarchy, and the legacy
+# v1 systemd hierarchy.
+CGROUP_ROOTS = (
+    "/sys/fs/cgroup",
+    "/sys/fs/cgroup/unified",
+    "/sys/fs/cgroup/systemd",
+)
 
 # Single monotonic activity counter. tokens_predicted_total only ever
 # increases within a llama-server run (reset on restart), so a drop
@@ -170,18 +188,16 @@ def systemctl(service, verb):
 
 
 # Handle for the in-flight fire-and-forget `systemctl stop` so the main loop
-# can reap it once it finishes without ever blocking the sleep call.
+# can reap it once it finishes without blocking.
 _stop_proc = None
 
 
 def start_llama_stop():
-    """Ask llama-server to stop without waiting for it to exit.
+    """Ask llama-server to stop without blocking the caller.
 
     `systemctl stop` blocks until the unit is fully stopped, which can take a
     while (model unload / GPU flush on shutdown). We launch it and return
-    immediately so the host can enter the sleep state right away; systemd
-    keeps the stop job going (frozen with the rest of the system while asleep,
-    resumed on wake) and will order any later start after it completes."""
+    immediately, then poll its progress with wait_llama_stopped()."""
     global _stop_proc
     try:
         _stop_proc = subprocess.Popen(
@@ -206,14 +222,169 @@ def reap_llama_stop():
         _stop_proc = None
 
 
+def systemctl_show(properties):
+    """Return selected `systemctl show` properties as a dict, or None."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "show"]
+            + ["--property=" + prop for prop in properties]
+            + [LLAMA_SERVICE],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception as exc:
+        log("systemctl show %s failed: %s" % (LLAMA_SERVICE, exc))
+        return None
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        log(
+            "systemctl show %s failed (rc=%s): %s"
+            % (LLAMA_SERVICE, result.returncode, detail or result)
+        )
+        return None
+    props = {}
+    for line in result.stdout.splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            props[key] = value
+    return props
+
+
+def cgroup_pids(control_group):
+    """PIDs still in a unit's cgroup, including descendant cgroups.
+
+    Returns an empty set when the cgroup no longer exists (systemd removes
+    it once the unit is fully stopped), or None if it cannot be read.
+    """
+    if not control_group:
+        return set()
+    base = None
+    for root in CGROUP_ROOTS:
+        candidate = root + control_group
+        if os.path.isdir(candidate):
+            base = candidate
+            break
+    if base is None:
+        return set()
+    pids = set()
+    for dirpath, _dirnames, _filenames in os.walk(base):
+        procs = os.path.join(dirpath, "cgroup.procs")
+        try:
+            with open(procs) as f:
+                pids.update(int(pid) for pid in f.read().split())
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError) as exc:
+            log("cannot read %s: %s" % (procs, exc))
+            return None
+    return pids
+
+
+def llama_down_state():
+    """Return (fully_stopped, detail) for the llama-server unit.
+
+    Fully stopped means the unit is inactive/failed *and* no process remains
+    in its cgroup (including descendants). A unit that is still deactivating,
+    or that is marked inactive but left processes behind, is not down."""
+    props = systemctl_show(("ActiveState", "SubState", "ControlGroup"))
+    if props is None:
+        return False, "unknown (systemctl show failed)"
+    active = props.get("ActiveState") or "unknown"
+    sub = props.get("SubState") or "unknown"
+    if active not in ("inactive", "failed"):
+        return False, "%s/%s" % (active, sub)
+    pids = cgroup_pids(props.get("ControlGroup", ""))
+    if pids is None:
+        return False, "%s/%s (cgroup unreadable)" % (active, sub)
+    if pids:
+        return False, "%s/%s (%d process(es) left: %s)" % (
+            active,
+            sub,
+            len(pids),
+            ",".join(str(pid) for pid in sorted(pids)),
+        )
+    return True, "%s/%s" % (active, sub)
+
+
+def wait_for_llama_down(timeout):
+    """Poll until llama-server is fully down or `timeout` seconds elapse."""
+    deadline = time.monotonic() + timeout
+    last_detail = None
+    while True:
+        reap_llama_stop()
+        down, detail = llama_down_state()
+        if down:
+            log("%s is fully stopped (%s)" % (LLAMA_SERVICE, detail))
+            return True
+        if detail != last_detail:
+            log("waiting for %s to stop: %s" % (LLAMA_SERVICE, detail))
+            last_detail = detail
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(LLAMA_STOP_POLL_INTERVAL, remaining))
+
+
+def wait_llama_stopped():
+    """Wait until llama-server is completely stopped.
+
+    The fire-and-forget `systemctl stop` can take a while to unload the model
+    and flush the GPU, so poll until the unit is inactive/failed with an empty
+    cgroup. If that takes longer than LLAMA_STOP_TIMEOUT, SIGKILL every
+    remaining process and give the stop job LLAMA_STOP_KILL_GRACE more
+    seconds. Returns True only once the unit is confirmed gone.
+    """
+    if wait_for_llama_down(LLAMA_STOP_TIMEOUT):
+        return True
+    log(
+        "%s did not stop within %ss: sending SIGKILL to all processes"
+        % (LLAMA_SERVICE, LLAMA_STOP_TIMEOUT)
+    )
+    try:
+        result = subprocess.run(
+            [
+                "systemctl",
+                "kill",
+                "--kill-who=all",
+                "--signal=SIGKILL",
+                LLAMA_SERVICE,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            log(
+                "systemctl kill %s failed (rc=%s): %s"
+                % (LLAMA_SERVICE, result.returncode, detail or result)
+            )
+    except Exception as exc:
+        log("systemctl kill %s failed: %s" % (LLAMA_SERVICE, exc))
+    if wait_for_llama_down(LLAMA_STOP_KILL_GRACE):
+        return True
+    _down, detail = llama_down_state()
+    log("%s is still not fully stopped (%s)" % (LLAMA_SERVICE, detail))
+    return False
+
+
 def sleep_cycle():
-    """One full sleep cycle: ask llama-server to stop (fire-and-forget, if
-    configured), put the host to sleep immediately, then restart llama-server
-    after wake. Returns True if the sleep call itself completed. llama-server
-    is always restarted after the attempt, even if the sleep failed, so the
-    host is left in its previous state."""
+    """One full sleep cycle: ask llama-server to stop, wait until it is
+    completely down (if configured), put the host to sleep, then restart
+    llama-server after wake.
+
+    Returns True if the sleep call itself completed. llama-server is always
+    restarted after the attempt, even if the sleep failed, so the host is left
+    in its previous state. If a complete shutdown cannot be confirmed, the
+    host is *not* put to sleep, to avoid suspending with the model still in
+    GPU memory."""
     if STOP_LLAMA_ON_SLEEP:
         start_llama_stop()
+        if not wait_llama_stopped():
+            log("not sleeping: %s could not be stopped completely" % LLAMA_SERVICE)
+            systemctl(LLAMA_SERVICE, "start")
+            return False
     ok = sleep_host()
     if STOP_LLAMA_ON_SLEEP:
         systemctl(LLAMA_SERVICE, "start")
