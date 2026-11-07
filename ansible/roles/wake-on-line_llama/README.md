@@ -1,13 +1,13 @@
 # AI Power Role
 
-This Ansible role configures power management for the physical AI host (`ai.local`): Wake-on-LAN so the machine can be woken remotely, and automatic sleep when `llama-server` sits idle (default: S1 standby, CPU-idle only).
+This Ansible role configures power management for the physical AI host (`ai.local`): Wake-on-LAN so the machine can be woken remotely, and automatic sleep when `llama-server` sits idle (default: `mem`, S3 suspend-to-RAM).
 
 ## Features
 
 - Persists Wake-on-LAN (magic packet) on the configured NICs via a udev rule, so WOL survives reboots
 - Applies `ethtool` WOL settings immediately for the current boot
 - Installs `ai-power-monitor.service`, a python3 daemon that polls `llama-server`'s Prometheus `/metrics` endpoint (localhost only)
-- Puts the host to sleep after a configurable idle timeout (default: `standby`, S1 CPU-idle written directly to `/sys/power/state`; also supports `mem`/`disk` raw states and `systemctl` modes like `suspend`/`hibernate`)
+- Puts the host to sleep after a configurable idle timeout (default: `mem`, S3 suspend-to-RAM written directly to `/sys/power/state`; also supports `standby`/`disk`/`freeze` raw states and `systemctl` modes like `suspend`/`hibernate`)
 - Pins the kernel memory sleep mode via `/etc/systemd/sleep.conf.d/90-ai-power.conf` (applies to `systemctl suspend` only, not `standby`)
 - Tracks activity via the `llamacpp:tokens_predicted_total` counter and in-flight request gauges, so the idle clock survives service restarts and suspend/resume cycles
 
@@ -30,7 +30,7 @@ Available variables are defined in `defaults/main.yml`:
 
 ### Idle Suspend
 
-- `ai_power_sleep_mode`: sleep mode used when idle (default: `standby`). Two families:
+- `ai_power_sleep_mode`: sleep mode used when idle (default: `mem`). Two families:
   - **Raw `/sys/power/state` values** (written directly, no systemd-sleep involved):
     - `standby`: S1 CPU idle; peripherals stay fully powered, so Wake-on-LAN works without any BIOS/firmware sleep-state involvement. Fastest entry/exit.
     - `mem`: S3 suspend-to-RAM (equivalent to `systemctl suspend`).
@@ -43,7 +43,7 @@ Available variables are defined in `defaults/main.yml`:
   - `shallow`: a shallow platform sleep state, only if the firmware supports it.
   - `deep`: suspend-to-RAM (S3), the most power-saving but slowest mode. **Not recommended on `laphroaig`**: the freezer times out for 20s on `deep` and again on `shallow` before falling back, and `amdgpu`/KFD fails to restore `llama-server`, making a sleep cycle take 4–5 minutes.
   - `""` (empty): leave the kernel default untouched.
-- `ai_power_idle_timeout`: Suspend when `llama-server` has been idle this long, in seconds (default: `900` = 15 minutes)
+- `ai_power_idle_timeout`: Suspend when `llama-server` has been idle this long, in seconds (default: `600` = 10 minutes)
 - `ai_power_stop_llama_on_sleep`: Stop `llama-server` before sleeping and restart it after wake (default: `true`). Freeing the GPU's pinned model buffers makes suspend/resume fast and avoids the `amdgpu`/KFD resume failure seen when the model is loaded (see "Notes").
 - `ai_power_llama_service`: The systemd unit to stop/start around each sleep cycle (default: `llama-server.service`)
 - `ai_power_llama_stop_timeout`: How long to wait for that unit to become fully inactive with an empty cgroup before sleeping, in seconds (default: `120`). The model unload / GPU flush can take a while. On timeout the monitor sends SIGKILL to the remaining processes and waits `ai_power_llama_stop_kill_grace` more seconds; if the unit is still not completely down it refuses to sleep and restarts `llama-server` instead.
@@ -51,7 +51,7 @@ Available variables are defined in `defaults/main.yml`:
 - `ai_power_llama_stop_kill_grace`: Extra time to wait after the SIGKILL escalation, in seconds (default: `10`)
 - `ai_power_metrics_url`: `llama-server` metrics endpoint (default: `http://127.0.0.1:8080/metrics`)
 - `ai_power_poll_interval`: How often to poll the metrics endpoint, in seconds (default: `30`)
-- `ai_power_status_log_interval`: How often to log a state dump with the sleep countdown, in seconds (default: `30`; `0` logs on every poll)
+- `ai_power_status_log_interval`: How often to log a state dump with the sleep countdown, in seconds (default: `20`; `0` logs on every poll)
 
 ### Paths
 

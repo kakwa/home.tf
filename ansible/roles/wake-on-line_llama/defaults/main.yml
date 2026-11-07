@@ -29,7 +29,7 @@ ai_power_wol_flags: g
 #     freeze  - freeze processes only, no hardware sleep
 #   systemd-level (issued via "systemctl <mode>"):
 #     suspend, hibernate, hybrid-sleep, suspend-then-hibernate
-ai_power_sleep_mode: standby
+ai_power_sleep_mode: mem
 
 # Stop llama-server before sleeping and restart it after wake. Freeing the
 # GPU's pinned model buffers makes suspend/resume fast and avoids the
@@ -64,8 +64,8 @@ ai_power_llama_stop_kill_grace: 10
 ai_power_mem_sleep: s2idle
 
 # Suspend when llama-server has been idle for this long (seconds).
-# 900 = 15 minutes.
-ai_power_idle_timeout: 900
+# 600 = 10 minutes.
+ai_power_idle_timeout: 600
 
 # llama-server metrics endpoint (http server, localhost only).
 ai_power_metrics_url: http://127.0.0.1:8080/metrics
@@ -75,7 +75,7 @@ ai_power_poll_interval: 30
 
 # How often to log a state dump with the sleep countdown (seconds).
 # 0 = log on every poll.
-ai_power_status_log_interval: 30
+ai_power_status_log_interval: 20
 
 # State dir/file for the activity baseline (survives suspend/resume).
 ai_power_state_dir: /var/lib/ai-power
