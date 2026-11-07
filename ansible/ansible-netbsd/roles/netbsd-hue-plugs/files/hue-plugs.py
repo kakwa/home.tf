@@ -14,6 +14,7 @@ Usage:
     hue-plugs.py restart <name|all>
     hue-plugs.py warning --duration 30 <name>
     hue-plugs.py critical --duration 60 <name>
+    hue-plugs.py transition <name> --on --hue H --sat S --bri B --duration D
     hue-plugs.py autofill [--save]
     hue-plugs.py setup [--bridge-ip IP] [--save]
 
@@ -64,6 +65,13 @@ import urllib.request
 DEFAULT_CONFIG = "/etc/hue-plugs.conf"
 TIMEOUT = 5  # seconds per HTTP request
 PAIR_DEVICETYPE = "hue-plugs#netbsd"  # required by the Hue pairing API
+
+# Alert animation timing: one full colour cycle takes ALERT_HUE_PERIOD
+# seconds, one full brightness cycle takes ALERT_BRI_PERIOD seconds,
+# and one request is issued every ALERT_STEP seconds.
+ALERT_HUE_PERIOD = 2.0
+ALERT_BRI_PERIOD = 1.5
+ALERT_STEP = 0.25
 
 DEBUG = False
 
@@ -347,11 +355,15 @@ def get_groups(cfg: dict) -> list:
         return []
     groups = []
     for gid, gstate in raw.items():
+        # Firmware-dependent key for member lights: newer firmware
+        # exposes "lights" (a list of light id strings), older ones
+        # "device_ids".  Accept both.
+        ids = gstate.get("lights", gstate.get("device_ids", []))
         groups.append({
             "id": gid,
             "name": gstate.get("name", gid),
             "type": gstate.get("type", "unknown"),
-            "device_ids": [str(d) for d in gstate.get("device_ids", [])],
+            "device_ids": [str(d) for d in ids],
         })
     return groups
 
@@ -363,9 +375,11 @@ def rooms_by_light_id(groups: list) -> dict:
     light that appears in several rooms is reported as ``"a / b"``.  Lights in
     no room map to ``""``.
     """
-    room_ids = [g for g in groups if g["type"] == "room"]
+    # Firmware-dependent type casing: newer firmware reports "Room"/
+    # "Zone", older ones lowercase "room"/"zone".
+    room_ids = [g for g in groups if g["type"].lower() == "room"]
     if not room_ids:
-        room_ids = [g for g in groups if g["type"] == "zone"]
+        room_ids = [g for g in groups if g["type"].lower() == "zone"]
     result = {}
     for g in room_ids:
         for dev in g["device_ids"]:
@@ -385,8 +399,14 @@ def _get_light_state(cfg: dict, light_id: str) -> dict:
     """Return the current state dict of a single light."""
     raw = api_request(cfg["bridge_ip"], cfg["client_key"],
                       "GET", f"/lights/{light_id}")
-    if isinstance(raw, dict) and light_id in raw:
-        return raw[light_id].get("state", {})
+    if isinstance(raw, dict):
+        # Firmware-dependent response shape: some bridges return the
+        # light object directly ("state" at the top level), others a
+        # dict keyed by light id.
+        if "state" in raw:
+            return raw["state"]
+        if light_id in raw:
+            return raw[light_id].get("state", {})
     if isinstance(raw, list):
         for entry in raw:
             err = entry.get("error") if isinstance(entry, dict) else None
@@ -457,12 +477,12 @@ def _animate(cfg: dict, kind: str, target_id: str,
     """Run the colour animation loop for *duration* seconds.
 
     *kind* is "light" or "group".  Hue oscillates between *hue_a* and
-    *hue_b*; brightness oscillates between *bri_lo* and *bri_hi*.
-    *sat* is fixed.  A sine wave drives both oscillations so the motion
-    is smooth and periodic.
+    *hue_b* with a full cycle every ALERT_HUE_PERIOD seconds; brightness
+    oscillates between *bri_lo* and *bri_hi* with a full cycle every
+    ALERT_BRI_PERIOD seconds.  *sat* is fixed.  Both waves are driven
+    from the wall clock so the motion stays periodic no matter how long
+    the alert runs.
     """
-    steps = max(int(duration / 0.5), 1)
-    sleep_s = duration / steps
     # Capture state before animating
     if kind == "light":
         saved = _get_light_state(cfg, target_id)
@@ -472,12 +492,20 @@ def _animate(cfg: dict, kind: str, target_id: str,
     # Ensure the light/group is on with full sat
     base_body = {"on": True, "sat": sat}
     try:
-        for i in range(steps):
-            phase = i / max(steps - 1, 1)  # 0..1
-            # sine wave: 0 -> 1 -> 0 over one cycle
-            wave = math.sin(phase * math.pi)  # peaks at 0.5
-            hue = int(hue_a + (hue_b - hue_a) * wave)
-            bri = int(bri_lo + (bri_hi - bri_lo) * wave)
+        start = time.monotonic()
+        while True:
+            now = time.monotonic()
+            elapsed = now - start
+            if elapsed >= duration:
+                break
+            # Full sine cycles (-1..1) mapped to 0..1, independent
+            # periods for colour and brightness.
+            hue_frac = 0.5 + 0.5 * math.sin(
+                2.0 * math.pi * elapsed / ALERT_HUE_PERIOD)
+            bri_frac = 0.5 + 0.5 * math.sin(
+                2.0 * math.pi * elapsed / ALERT_BRI_PERIOD)
+            hue = int(hue_a + (hue_b - hue_a) * hue_frac)
+            bri = int(bri_lo + (bri_hi - bri_lo) * bri_frac)
             body = {**base_body, "hue": hue, "bri": bri,
                     "transitiontime": 10}  # 100 ms transition
             if kind == "light":
@@ -486,7 +514,9 @@ def _animate(cfg: dict, kind: str, target_id: str,
             else:
                 api_request(cfg["bridge_ip"], cfg["client_key"],
                             "PUT", f"/groups/{target_id}/action", body=body)
-            time.sleep(sleep_s)
+            # Sleep until the next step (accounts for request time).
+            next_t = start + (int(elapsed / ALERT_STEP) + 1) * ALERT_STEP
+            time.sleep(max(0.05, next_t - time.monotonic()))
     finally:
         # Always restore previous state, even on error
         if kind == "light":
@@ -550,17 +580,21 @@ def cmd_alert(cfg: dict, args: argparse.Namespace, severity: str) -> int:
     duration = args.duration
 
     if severity == "warning":
-        # Yellow -> Orange: hue 22000 -> 15000
-        hue_a, hue_b = 22000, 15000
+        # Orange, oscillating slightly toward yellow.  The Hue scale
+        # 0-65535 maps to 0-360 deg: orange ~5000 (27 deg), a slightly
+        # yellower orange ~7000 (38 deg).
+        hue_a, hue_b = 5000, 7000
         bri_lo, bri_hi = 80, 254
         sat = 200
-        desc = f"warning ({duration}s, yellow→orange)"
+        desc = f"warning ({duration}s, orange→yellow-orange)"
     else:
-        # Orange -> Red: hue 15000 -> 0
-        hue_a, hue_b = 15000, 0
+        # Purple -> Red.  Purple ~49152 (270 deg); red is the top of
+        # the scale, 65535 (360 deg), so the oscillation sweeps through
+        # magenta rather than the long way round the colour wheel.
+        hue_a, hue_b = 49152, 65535
         bri_lo, bri_hi = 100, 254
         sat = 230
-        desc = f"critical ({duration}s, orange→red)"
+        desc = f"critical ({duration}s, purple→red)"
 
     print(f"  {desc} on {label} ({kind} {target_id})")
     _animate(cfg, kind, target_id, duration,

@@ -68,6 +68,16 @@
         hue_bridge_ip: "{{ vault_hue_bridge_ip | default(lookup('file', playbook_dir ~ '/hue_bridge_ip.txt') | trim, true) }}"
         hue_client_key: "{{ vault_hue_client_key | default(lookup('file', playbook_dir ~ '/hue_bridge_key.txt') | trim, true) }}"
         hue_plugs:
+          - id: "1"
+            name: "Vilebrequin"
+          - id: "2"
+            name: "TV strip"
+          - id: "3"
+            name: "TV left"
+          - id: "4"
+            name: "Desktop strip"
+          - id: "5"
+            name: "Sofa"
           - id: "6"
             name: "PlugPcIA"
     - role: netbsd-llama-ui
