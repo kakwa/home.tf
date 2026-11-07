@@ -12,6 +12,7 @@ Usage:
     hue-plugs.py stop <name|all>
     hue-plugs.py start <name|all>
     hue-plugs.py restart <name|all>
+    hue-plugs.py autofill [--save]
     hue-plugs.py setup [--bridge-ip IP] [--save]
 
 Add --debug (or set HUE_PLUGS_DEBUG=1) to dump the raw HTTP requests and
@@ -32,6 +33,7 @@ or the HUE_PLUGS_CONFIG environment variable):
 
 The Hue API used:
     GET  /api/<key>/lights
+    GET  /api/<key>/groups
     PUT  /api/<key>/lights/<id>/state   body: {"on": true|false}
     POST /api/                          body: {}   (pairing / setup)
 
@@ -73,8 +75,12 @@ class HuePlugsError(Exception):
     """Raised when the Hue bridge is unreachable or returns an error."""
 
 
-def load_config(path: str) -> dict:
-    """Load and validate the JSON config file."""
+def load_config(path: str, require_plugs: bool = True) -> dict:
+    """Load and validate the JSON config file.
+
+    When *require_plugs* is False (used by ``autofill``), the ``plugs`` key
+    may be absent or empty -- autofill regenerates it from the bridge.
+    """
     try:
         with open(path, encoding="utf-8") as fh:
             cfg = json.load(fh)
@@ -83,18 +89,20 @@ def load_config(path: str) -> dict:
     except json.JSONDecodeError as exc:
         raise HuePlugsError(f"invalid JSON in {path}: {exc}")
 
-    for field in ("bridge_ip", "client_key", "plugs"):
+    for field in ("bridge_ip", "client_key"):
         if field not in cfg:
             raise HuePlugsError(f"missing key in config: {field!r}")
 
-    if not isinstance(cfg["plugs"], list) or not cfg["plugs"]:
-        raise HuePlugsError("'plugs' must be a non-empty list")
-
-    for plug in cfg["plugs"]:
-        if "id" not in plug or "name" not in plug:
-            raise HuePlugsError(
-                f"each plug needs 'id' and 'name': {plug!r}"
-            )
+    if require_plugs:
+        if "plugs" not in cfg:
+            raise HuePlugsError("missing key in config: 'plugs'")
+        if not isinstance(cfg["plugs"], list) or not cfg["plugs"]:
+            raise HuePlugsError("'plugs' must be a non-empty list")
+        for plug in cfg["plugs"]:
+            if "id" not in plug or "name" not in plug:
+                raise HuePlugsError(
+                    f"each plug needs 'id' and 'name': {plug!r}"
+                )
 
     cfg.setdefault("restart_delay", 15)
     return cfg
@@ -321,6 +329,47 @@ def get_lights(cfg: dict) -> list:
     return lights
 
 
+def get_groups(cfg: dict) -> list:
+    """Return the bridge's groups (rooms, zones, lights) from ``GET /groups``.
+
+    Each entry is ``{id, name, type, device_ids}``.  Rooms and zones are the
+    useful ones: they tell you which room a given device sits in, which is
+    handy when naming plugs.  Returns an empty list when the bridge does not
+    expose groups (some firmware) so callers can degrade gracefully.
+    """
+    try:
+        raw = api_request(cfg["bridge_ip"], cfg["client_key"],
+                          "GET", "/groups")
+    except HuePlugsError:
+        return []
+    groups = []
+    for gid, gstate in raw.items():
+        groups.append({
+            "id": gid,
+            "name": gstate.get("name", gid),
+            "type": gstate.get("type", "unknown"),
+            "device_ids": [str(d) for d in gstate.get("device_ids", [])],
+        })
+    return groups
+
+
+def rooms_by_light_id(groups: list) -> dict:
+    """Map each light id to the room it belongs to.
+
+    Only groups of type ``room`` (and, failing that, ``zone``) are used.  A
+    light that appears in several rooms is reported as ``"a / b"``.  Lights in
+    no room map to ``""``.
+    """
+    room_ids = [g for g in groups if g["type"] == "room"]
+    if not room_ids:
+        room_ids = [g for g in groups if g["type"] == "zone"]
+    result = {}
+    for g in room_ids:
+        for dev in g["device_ids"]:
+            result.setdefault(dev, []).append(g["name"])
+    return {k: " / ".join(v) for k, v in result.items()}
+
+
 def set_plug_on(cfg: dict, plug_id: str, on: bool) -> bool:
     """Set a single plug to on/off.  Returns True on success."""
     body = {"on": on}
@@ -424,6 +473,59 @@ def cmd_restart(cfg: dict, name: str) -> int:
             failed += 1
 
     return 1 if failed else 0
+
+
+def cmd_autofill(cfg: dict, args: argparse.Namespace) -> int:
+    """Discover every light on the bridge and emit a ready-to-paste
+    ``hue_plugs`` list.
+
+    Devices already present in the config keep their (user-chosen) name;
+    newly discovered devices are added under the name the bridge gave
+    them.  The printed YAML block is meant to be pasted into the Ansible
+    playbook's ``hue_plugs`` variable; with --save the regenerated list is
+    also written back to the local config file.
+    """
+    lights = get_lights(cfg)
+    rooms = rooms_by_light_id(get_groups(cfg))
+    existing_names = {str(p["id"]): p["name"]
+                      for p in cfg.get("plugs", []) or []}
+
+    rows = []
+    for light in lights:
+        lid = str(light["id"])
+        rows.append({
+            "id": lid,
+            "name": existing_names.get(lid, light["name"]),
+            "type": light["type"],
+            "room": rooms.get(lid, ""),
+        })
+
+    def sort_key(row):
+        return (0, int(row["id"])) if row["id"].isdigit() else (1, row["id"])
+    rows.sort(key=sort_key)
+
+    print(f"discovered {len(rows)} device(s) on the bridge\n")
+    print(f"{'HUE ID':<10} {'NAME':<20} {'ROOM':<20} TYPE")
+    print("-" * 70)
+    for row in rows:
+        room = row["room"] if row["room"] else "-"
+        print(f"{row['id']:<10} {row['name']:<20} {room:<20} {row['type']}")
+
+    print("\npaste this into your Ansible playbook:")
+    print("  hue_plugs:")
+    for row in rows:
+        print(f'    - id: "{row["id"]}"')
+        print(f'      name: "{row["name"]}"')
+
+    if args.save:
+        cfg["plugs"] = [{"id": row["id"], "name": row["name"]}
+                        for row in rows]
+        with open(args.config, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=4)
+            fh.write("\n")
+        print(f"\nsaved {len(rows)} plug(s) to {args.config}")
+
+    return 0
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -560,6 +662,17 @@ def build_parser() -> argparse.ArgumentParser:
         )
 
     p = sub.add_parser(
+        "autofill",
+        help="list all bridge lights and print a pasteable hue_plugs list",
+        parents=[debug_opt],
+    )
+    p.add_argument(
+        "--save",
+        action="store_true",
+        help="also write the discovered plugs back to the config file",
+    )
+
+    p = sub.add_parser(
         "setup",
         help="discover the bridge (mDNS) and pair (press link button)",
         parents=[debug_opt],
@@ -591,8 +704,11 @@ def main(argv: list | None = None) -> int:
     if args.command == "setup":
         return cmd_setup(args)
 
+    # autofill regenerates the plug list, so an empty/missing one is fine
+    require_plugs = args.command != "autofill"
+
     try:
-        cfg = load_config(args.config)
+        cfg = load_config(args.config, require_plugs=require_plugs)
     except HuePlugsError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 1
@@ -606,6 +722,8 @@ def main(argv: list | None = None) -> int:
             return cmd_start(cfg, args.name)
         if args.command == "restart":
             return cmd_restart(cfg, args.name)
+        if args.command == "autofill":
+            return cmd_autofill(cfg, args)
     except HuePlugsError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

@@ -10,7 +10,9 @@ hue_plugs_enable: true
 
 # Hue bridge address and client key (the "username" the bridge returns when
 # you pair a new client). REQUIRED when hue_plugs_enable is true. These are
-# secrets, so set them from vault, e.g. hue_bridge_ip: "{{ vault_hue_bridge_ip }}".
+# secrets, so set them from vault, e.g. hue_bridge_ip: "{{ vault_hue_bridge_ip
+# | default(lookup('file', playbook_dir ~ '/hue_bridge_ip.txt') | trim, true) }}"
+# (one line per file, same pattern as the OVH DNS tokens).
 hue_bridge_ip: ""
 hue_client_key: ""
 

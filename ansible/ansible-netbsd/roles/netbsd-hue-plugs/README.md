@@ -13,6 +13,8 @@ hue-plugs.py stop ai           # power off the plug named "ai"
 hue-plugs.py start ai          # power on the plug named "ai"
 hue-plugs.py restart ai        # off, wait, on (restart the device)
 hue-plugs.py stop all          # power off every configured plug
+hue-plugs.py autofill          # list every bridge device + room, print pasteable hue_plugs
+hue-plugs.py autofill --save   # also rewrite the local config's plug list
 hue-plugs.py setup --save      # discover bridge via mDNS, pair, save to config
 ```
 
@@ -41,14 +43,16 @@ Variables (see `defaults/main.yml`):
 
 ## Playbook Usage
 
-The bridge IP and client key are secrets -- set them from vault:
+The bridge IP and client key are secrets. They can be set from vault, or
+dropped in one-line files next to the playbook (same pattern as the OVH
+DNS tokens); vault values take precedence when set:
 
 ```yaml
 - role: netbsd-hue-plugs
   tags: ["service", "netbsd-hue-plugs"]
   vars:
-    hue_bridge_ip: "{{ vault_hue_bridge_ip }}"
-    hue_client_key: "{{ vault_hue_client_key }}"
+    hue_bridge_ip: "{{ vault_hue_bridge_ip | default(lookup('file', playbook_dir ~ '/hue_bridge_ip.txt') | trim, true) }}"
+    hue_client_key: "{{ vault_hue_client_key | default(lookup('file', playbook_dir ~ '/hue_bridge_key.txt') | trim, true) }}"
     hue_plugs:
       - id: "1"
         name: "ai"
@@ -74,10 +78,40 @@ pairs by POSTing `{"devicetype": "hue-plugs#netbsd"}` to the
 unauthenticated `/api/` endpoint.  Follow the prompt and press the link
 button on the Hue bridge within 60 seconds.
 
-After pairing, copy the printed `vault_hue_bridge_ip` and
-`vault_hue_client_key` values into your Ansible vault file.
+After pairing, copy the printed bridge IP and client key into
+`hue_bridge_ip.txt` and `hue_bridge_key.txt` next to the playbook (or into
+your Ansible vault variables).
 
-## Finding Plug IDs
+## Finding Plug IDs (autofill)
 
-Once deployed, run `hue-plugs.py list` to see all lights on the bridge
-and their IDs. Use those IDs in the `hue_plugs` list.
+`autofill` talks to the bridge, lists every device it finds (with the room
+each one lives in) and prints a ready-to-paste `hue_plugs` block for the
+playbook:
+
+```sh
+hue-plugs.py autofill
+```
+
+```
+discovered 3 device(s) on the bridge
+
+HUE ID     NAME                 ROOM                 TYPE
+----------------------------------------------------------------------
+1          pc1                  Study                On/Off plug-in unit
+6          PlugPcIA             Office               On/Off plug-in unit
+9          Hue Bulb             Office               Dimmable light
+```
+
+```yaml
+  hue_plugs:
+    - id: "1"
+      name: "pc1"
+    - id: "6"
+      name: "PlugPcIA"
+```
+
+Devices already present in the local config keep their (user-chosen) name;
+newly discovered ones fall back to the name the bridge gave them. Add
+`--save` to also write the regenerated plug list back to the config file.
+`autofill` works even when the config has no plugs yet (it is the way to
+populate them for the first time).

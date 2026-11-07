@@ -7,9 +7,9 @@
       - hue_plugs | length > 0
     fail_msg: >-
       hue_bridge_ip, hue_client_key and hue_plugs must all be set.
-      hue_bridge_ip and hue_client_key are secrets -- set them from vault,
-      e.g. hue_bridge_ip: "{{ vault_hue_bridge_ip }}",
-      hue_client_key: "{{ vault_hue_client_key }}".
+      hue_bridge_ip and hue_client_key are secrets -- set them from vault
+      (e.g. hue_bridge_ip: vault_hue_bridge_ip) or drop hue_bridge_ip.txt
+      and hue_bridge_key.txt next to the playbook (one line each).
       Set hue_plugs to a list of {id, name} entries.
       Alternatively set hue_plugs_enable: false to skip this role.
     quiet: true

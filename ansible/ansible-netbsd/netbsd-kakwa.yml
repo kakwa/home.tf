@@ -65,11 +65,11 @@
     - role: netbsd-hue-plugs
       tags: ["service", "netbsd-hue-plugs"]
       vars:
-        hue_bridge_ip: "{{ vault_hue_bridge_ip }}"
-        hue_client_key: "{{ vault_hue_client_key }}"
+        hue_bridge_ip: "{{ vault_hue_bridge_ip | default(lookup('file', playbook_dir ~ '/hue_bridge_ip.txt') | trim, true) }}"
+        hue_client_key: "{{ vault_hue_client_key | default(lookup('file', playbook_dir ~ '/hue_bridge_key.txt') | trim, true) }}"
         hue_plugs:
-          - id: "1"
-            name: "ai"
+          - id: "6"
+            name: "PlugPcIA"
     - role: netbsd-llama-ui
       tags: ["app", "netbsd-llama-ui"]
     - role: netbsd-nginx
