@@ -12,6 +12,8 @@ Usage:
     hue-plugs.py stop <name|all>
     hue-plugs.py start <name|all>
     hue-plugs.py restart <name|all>
+    hue-plugs.py warning --duration 30 <name>
+    hue-plugs.py critical --duration 60 <name>
     hue-plugs.py autofill [--save]
     hue-plugs.py setup [--bridge-ip IP] [--save]
 
@@ -49,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import select
 import socket
@@ -378,6 +381,121 @@ def set_plug_on(cfg: dict, plug_id: str, on: bool) -> bool:
     return True
 
 
+def _get_light_state(cfg: dict, light_id: str) -> dict:
+    """Return the current state dict of a single light."""
+    raw = api_request(cfg["bridge_ip"], cfg["client_key"],
+                      "GET", f"/lights/{light_id}")
+    if isinstance(raw, dict) and light_id in raw:
+        return raw[light_id].get("state", {})
+    if isinstance(raw, list):
+        for entry in raw:
+            err = entry.get("error") if isinstance(entry, dict) else None
+            if err:
+                raise HuePlugsError(
+                    f"bridge error for light {light_id}: "
+                    f"{err.get('description', 'unknown')}"
+                )
+    raise HuePlugsError(f"unexpected response for light {light_id}")
+
+
+def _restore_light_state(cfg: dict, light_id: str, saved: dict) -> None:
+    """Restore a light to its previously captured state."""
+    body: dict = {}
+    if not saved.get("on", False):
+        body["on"] = False
+    else:
+        body["on"] = True
+        if saved.get("bri") is not None:
+            body["bri"] = saved["bri"]
+        if saved.get("hue") is not None and saved.get("sat") is not None:
+            body["hue"] = saved["hue"]
+            body["sat"] = saved["sat"]
+        elif saved.get("ct") is not None:
+            body["ct"] = saved["ct"]
+    api_request(cfg["bridge_ip"], cfg["client_key"],
+                "PUT", f"/lights/{light_id}/state", body=body)
+
+
+def _get_group_action(cfg: dict, group_id: str) -> dict:
+    """Return the current action dict of a group from the bridge."""
+    raw = api_request(cfg["bridge_ip"], cfg["client_key"],
+                      "GET", f"/groups/{group_id}")
+    if isinstance(raw, dict) and "action" in raw:
+        return raw["action"]
+    if isinstance(raw, list):
+        for entry in raw:
+            err = entry.get("error") if isinstance(entry, dict) else None
+            if err:
+                raise HuePlugsError(
+                    f"bridge error for group {group_id}: "
+                    f"{err.get('description', 'unknown')}"
+                )
+    raise HuePlugsError(f"unexpected response for group {group_id}")
+
+
+def _restore_group_action(cfg: dict, group_id: str, saved: dict) -> None:
+    """Restore a group's action to its previously captured state."""
+    body: dict = {}
+    if not saved.get("on", False):
+        body["on"] = False
+    else:
+        body["on"] = True
+        if saved.get("bri") is not None:
+            body["bri"] = saved["bri"]
+        if saved.get("hue") is not None and saved.get("sat") is not None:
+            body["hue"] = saved["hue"]
+            body["sat"] = saved["sat"]
+        elif saved.get("ct") is not None:
+            body["ct"] = saved["ct"]
+    api_request(cfg["bridge_ip"], cfg["client_key"],
+                "PUT", f"/groups/{group_id}/action", body=body)
+
+
+def _animate(cfg: dict, kind: str, target_id: str,
+             duration: int, hue_a: int, hue_b: int,
+             sat: int, bri_lo: int, bri_hi: int, label: str) -> None:
+    """Run the colour animation loop for *duration* seconds.
+
+    *kind* is "light" or "group".  Hue oscillates between *hue_a* and
+    *hue_b*; brightness oscillates between *bri_lo* and *bri_hi*.
+    *sat* is fixed.  A sine wave drives both oscillations so the motion
+    is smooth and periodic.
+    """
+    steps = max(int(duration / 0.5), 1)
+    sleep_s = duration / steps
+    # Capture state before animating
+    if kind == "light":
+        saved = _get_light_state(cfg, target_id)
+    else:
+        saved = _get_group_action(cfg, target_id)
+
+    # Ensure the light/group is on with full sat
+    base_body = {"on": True, "sat": sat}
+    try:
+        for i in range(steps):
+            phase = i / max(steps - 1, 1)  # 0..1
+            # sine wave: 0 -> 1 -> 0 over one cycle
+            wave = math.sin(phase * math.pi)  # peaks at 0.5
+            hue = int(hue_a + (hue_b - hue_a) * wave)
+            bri = int(bri_lo + (bri_hi - bri_lo) * wave)
+            body = {**base_body, "hue": hue, "bri": bri,
+                    "transitiontime": 10}  # 100 ms transition
+            if kind == "light":
+                api_request(cfg["bridge_ip"], cfg["client_key"],
+                            "PUT", f"/lights/{target_id}/state", body=body)
+            else:
+                api_request(cfg["bridge_ip"], cfg["client_key"],
+                            "PUT", f"/groups/{target_id}/action", body=body)
+            time.sleep(sleep_s)
+    finally:
+        # Always restore previous state, even on error
+        if kind == "light":
+            _restore_light_state(cfg, target_id, saved)
+        else:
+            _restore_group_action(cfg, target_id, saved)
+        print(f"  restored previous state for {label}")
+
+
 def resolve_targets(cfg: dict, name: str) -> list:
     """Resolve a user-supplied name ('all' or a plug name) to plug dicts.
 
@@ -392,6 +510,62 @@ def resolve_targets(cfg: dict, name: str) -> list:
             f"unknown plug name {name!r}. Known: {known}"
         )
     return matches
+
+
+def resolve_alert_target(cfg: dict, name: str) -> tuple:
+    """Resolve *name* to (kind, target_id, label) for alert commands.
+
+    Matches first against configured plug names, then against group/room
+    names from the bridge.  Returns:
+        ("light", plug_id, plug_name)  or
+        ("group", group_id, group_name)
+    """
+    # Try plug names first
+    for plug in cfg.get("plugs", []):
+        if plug["name"] == name:
+            return ("light", str(plug["id"]), plug["name"])
+
+    # Try group/room names from the bridge
+    groups = get_groups(cfg)
+    for g in groups:
+        if g["name"] == name:
+            return ("group", g["id"], g["name"])
+
+    # Not found -- give a helpful error
+    plug_names = ", ".join(p["name"] for p in cfg.get("plugs", []))
+    group_names = ", ".join(g["name"] for g in groups)
+    raise HuePlugsError(
+        f"unknown target {name!r}.\n"
+        f"  plugs:  {plug_names or '(none)'}\n"
+        f"  groups: {group_names or '(none)'}"
+    )
+
+
+def cmd_alert(cfg: dict, args: argparse.Namespace, severity: str) -> int:
+    """Run a warning or critical alert animation on a target.
+
+    *severity* is "warning" or "critical".
+    """
+    kind, target_id, label = resolve_alert_target(cfg, args.name)
+    duration = args.duration
+
+    if severity == "warning":
+        # Yellow -> Orange: hue 22000 -> 15000
+        hue_a, hue_b = 22000, 15000
+        bri_lo, bri_hi = 80, 254
+        sat = 200
+        desc = f"warning ({duration}s, yellow→orange)"
+    else:
+        # Orange -> Red: hue 15000 -> 0
+        hue_a, hue_b = 15000, 0
+        bri_lo, bri_hi = 100, 254
+        sat = 230
+        desc = f"critical ({duration}s, orange→red)"
+
+    print(f"  {desc} on {label} ({kind} {target_id})")
+    _animate(cfg, kind, target_id, duration,
+             hue_a, hue_b, sat, bri_lo, bri_hi, label)
+    return 0
 
 
 def cmd_list(cfg: dict) -> int:
@@ -672,6 +846,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="also write the discovered plugs back to the config file",
     )
 
+    for cmd, default_dur, desc in (
+        ("warning", 30, "animate yellow→orange alert on a light or room"),
+        ("critical", 60, "animate orange→red alert on a light or room"),
+    ):
+        p = sub.add_parser(cmd, help=desc, parents=[debug_opt])
+        p.add_argument(
+            "--duration",
+            type=int,
+            default=default_dur,
+            help=f"alert duration in seconds (default: {default_dur})",
+        )
+        p.add_argument(
+            "name",
+            help="plug name or room/group name",
+        )
+
     p = sub.add_parser(
         "setup",
         help="discover the bridge (mDNS) and pair (press link button)",
@@ -722,6 +912,10 @@ def main(argv: list | None = None) -> int:
             return cmd_start(cfg, args.name)
         if args.command == "restart":
             return cmd_restart(cfg, args.name)
+        if args.command == "warning":
+            return cmd_alert(cfg, args, "warning")
+        if args.command == "critical":
+            return cmd_alert(cfg, args, "critical")
         if args.command == "autofill":
             return cmd_autofill(cfg, args)
     except HuePlugsError as exc:
