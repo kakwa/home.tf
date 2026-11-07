@@ -62,6 +62,14 @@
         # Target host and MAC address of its NIC (required to send the magic packet).
         waker_target_host: "ai.local"
         waker_target_mac: "A0:36:9F:5B:38:02"
+    - role: netbsd-hue-plugs
+      tags: ["service", "netbsd-hue-plugs"]
+      vars:
+        hue_bridge_ip: "{{ vault_hue_bridge_ip }}"
+        hue_client_key: "{{ vault_hue_client_key }}"
+        hue_plugs:
+          - id: "1"
+            name: "ai"
     - role: netbsd-llama-ui
       tags: ["app", "netbsd-llama-ui"]
     - role: netbsd-nginx

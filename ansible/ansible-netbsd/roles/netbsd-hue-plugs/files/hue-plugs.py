@@ -1,0 +1,617 @@
+#!/usr/bin/env python3
+"""hue-plugs.py -- control Philips Hue smart plugs over the Hue API.
+
+A stdlib-only CLI tool (no external packages) that manages a set of
+Hue smart plugs on the local network.  It reads a small JSON config
+file describing the bridge, the client key and the plug names, then
+issues GET/PUT requests to the Hue API to turn plugs on/off and to
+list their state.
+
+Usage:
+    hue-plugs.py list
+    hue-plugs.py stop <name|all>
+    hue-plugs.py start <name|all>
+    hue-plugs.py restart <name|all>
+    hue-plugs.py setup [--bridge-ip IP] [--save]
+
+Add --debug (or set HUE_PLUGS_DEBUG=1) to dump the raw HTTP requests and
+responses to stderr.  The client key is masked in the logged URL.
+
+Config file (JSON, default /etc/hue-plugs.conf, override with --config
+or the HUE_PLUGS_CONFIG environment variable):
+
+    {
+        "bridge_ip": "192.168.0.10",
+        "client_key": "abcdef1234567890abcdef1234567890",
+        "restart_delay": 15,
+        "plugs": [
+            {"id": "1", "name": "pc1"},
+            {"id": "2", "name": "pc2"}
+        ]
+    }
+
+The Hue API used:
+    GET  /api/<key>/lights
+    PUT  /api/<key>/lights/<id>/state   body: {"on": true|false}
+    POST /api/                          body: {}   (pairing / setup)
+
+Bridge discovery uses a raw mDNS PTR query for _hue._tcp.local (UDP
+multicast 224.0.0.251:5353), implemented with stdlib sockets only.
+
+Exit codes:
+    0  all commands succeeded
+    1  one or more commands failed (details printed to stderr)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import select
+import socket
+import struct
+import sys
+import time
+import urllib.error
+import urllib.request
+
+DEFAULT_CONFIG = "/etc/hue-plugs.conf"
+TIMEOUT = 5  # seconds per HTTP request
+PAIR_DEVICETYPE = "hue-plugs#netbsd"  # required by the Hue pairing API
+
+DEBUG = False
+
+
+def debug(msg: str) -> None:
+    """Print *msg* to stderr when debug mode is enabled."""
+    if DEBUG:
+        print(msg, file=sys.stderr, flush=True)
+
+
+class HuePlugsError(Exception):
+    """Raised when the Hue bridge is unreachable or returns an error."""
+
+
+def load_config(path: str) -> dict:
+    """Load and validate the JSON config file."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except FileNotFoundError:
+        raise HuePlugsError(f"config file not found: {path}")
+    except json.JSONDecodeError as exc:
+        raise HuePlugsError(f"invalid JSON in {path}: {exc}")
+
+    for field in ("bridge_ip", "client_key", "plugs"):
+        if field not in cfg:
+            raise HuePlugsError(f"missing key in config: {field!r}")
+
+    if not isinstance(cfg["plugs"], list) or not cfg["plugs"]:
+        raise HuePlugsError("'plugs' must be a non-empty list")
+
+    for plug in cfg["plugs"]:
+        if "id" not in plug or "name" not in plug:
+            raise HuePlugsError(
+                f"each plug needs 'id' and 'name': {plug!r}"
+            )
+
+    cfg.setdefault("restart_delay", 15)
+    return cfg
+
+
+def api_request(bridge_ip: str, client_key: str, method: str,
+                path: str, body: dict | None = None) -> dict:
+    """Issue an HTTP request to the Hue bridge and return parsed JSON.
+
+    *client_key* may be empty for unauthenticated endpoints (e.g. the
+    pairing endpoint at /api/).  In debug mode the raw request and the raw
+    response (including the body of HTTP error responses) are dumped to
+    stderr; the client key is masked in the logged URL.
+    """
+    if client_key:
+        url = f"http://{bridge_ip}/api/{client_key}{path}"
+        shown_url = f"http://{bridge_ip}/api/<client-key>{path}"
+    else:
+        url = f"http://{bridge_ip}/api{path}"
+        shown_url = url
+    data = None
+    headers = {}
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers=headers)
+    debug(f">>> {method} {shown_url}")
+    if headers:
+        debug(f">>> headers: {headers}")
+    if data is not None:
+        debug(f">>> body: {data.decode('utf-8')}")
+
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            raw = resp.read()
+            debug(f"<<< {resp.status} {resp.reason}")
+            debug(f"<<< headers: {dict(resp.headers)}")
+            debug(f"<<< body: {raw.decode('utf-8', errors='replace')}")
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise HuePlugsError(
+                    f"invalid JSON from bridge {bridge_ip} "
+                    f"{method} {path}: {exc}"
+                ) from exc
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read()
+        debug(f"<<< {exc.code} {exc.reason}")
+        debug(f"<<< headers: {dict(exc.headers)}")
+        debug(f"<<< body: {err_body.decode('utf-8', errors='replace')}")
+        raise HuePlugsError(
+            f"HTTP {exc.code} from bridge {bridge_ip} {method} {path}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        debug(f"!!! connection failed: {exc.reason}")
+        raise HuePlugsError(
+            f"cannot reach Hue bridge at {bridge_ip}: {exc.reason}"
+        ) from exc
+
+
+def _dns_read_name(data: bytes, offset: int) -> tuple:
+    """Read a DNS name from *data* at *offset*, following compression
+    pointers.  Returns (name, offset_after_name)."""
+    labels = []
+    next_offset = None
+    jumps = 0
+    while True:
+        if jumps > 20:
+            raise ValueError("DNS name compression loop")
+        if offset >= len(data):
+            raise ValueError("DNS name extends past end of packet")
+        length = data[offset]
+        if length == 0:
+            if next_offset is None:
+                next_offset = offset + 1
+            break
+        if (length & 0xC0) == 0xC0:
+            if next_offset is None:
+                next_offset = offset + 2
+            if offset + 1 >= len(data):
+                raise ValueError("truncated DNS compression pointer")
+            pointer = ((length & 0x3F) << 8) | data[offset + 1]
+            offset = pointer
+            jumps += 1
+            continue
+        if offset + 1 + length > len(data):
+            raise ValueError("truncated DNS label")
+        labels.append(
+            data[offset + 1:offset + 1 + length].decode("ascii",
+                                                        errors="replace")
+        )
+        offset += 1 + length
+    return ".".join(labels), next_offset if next_offset is not None else offset
+
+
+def _build_mdns_query(service_type: str) -> bytes:
+    """Build a raw mDNS PTR query packet for *service_type*."""
+    header = struct.pack("!HHHHHH", 0, 0, 1, 0, 0, 0)
+    qname = b""
+    for label in service_type.rstrip(".").split("."):
+        encoded = label.encode("ascii")
+        if len(encoded) > 63:
+            raise ValueError(f"DNS label too long: {label!r}")
+        qname += bytes([len(encoded)]) + encoded
+    qname += b"\x00"
+    # QTYPE PTR (12), QCLASS IN (1)
+    return header + qname + struct.pack("!HH", 12, 1)
+
+
+def _parse_mdns_response(data: bytes) -> list:
+    """Parse an mDNS response, returning a list of (hostname, ipv4) tuples
+    taken from A records."""
+    if len(data) < 12:
+        return []
+    # DNS header: ID(0-1) FLAGS(2-3) QDCOUNT(4-5) ANCOUNT(6-7) NSCOUNT(8-9) ARCOUNT(10-11)
+    qdcount = struct.unpack("!H", data[4:6])[0]
+    ancount = struct.unpack("!H", data[6:8])[0]
+    ncount = struct.unpack("!H", data[8:10])[0]
+    arcount = struct.unpack("!H", data[10:12])[0]
+
+    offset = 12
+    try:
+        for _ in range(qdcount):
+            _, offset = _dns_read_name(data, offset)
+            offset += 4  # QTYPE + QCLASS
+        results = []
+        for _ in range(ancount + ncount + arcount):
+            name, offset = _dns_read_name(data, offset)
+            if offset + 10 > len(data):
+                break
+            rtype, _rclass, _ttl, rdlength = struct.unpack(
+                "!HHIH", data[offset:offset + 10])
+            offset += 10
+            if offset + rdlength > len(data):
+                break
+            rdata = data[offset:offset + rdlength]
+            offset += rdlength
+            if rtype == 1 and rdlength == 4:
+                results.append((name, socket.inet_ntoa(rdata)))
+        return results
+    except (ValueError, IndexError, struct.error):
+        return []
+
+
+def mdns_discover(timeout: float = 3.0) -> list:
+    """Discover Hue bridges on the local network via mDNS.
+
+    Queries _hue._tcp.local and collects A records.  Returns a list of
+    (ip, name) tuples, empty when nothing is found.  Requires multicast
+    to work on the default interface; falls back silently (returns [])
+    if the socket cannot be set up.
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except (AttributeError, OSError):
+            pass
+        try:
+            sock.bind(("", 5353))
+        except OSError:
+            sock.bind(("", 0))
+        mreq = struct.pack("4s4s", socket.inet_aton("224.0.0.251"),
+                           socket.inet_aton("0.0.0.0"))
+        try:
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+                            mreq)
+        except OSError:
+            pass
+    except OSError:
+        return []
+
+    query = _build_mdns_query("_hue._tcp.local")
+    found = {}
+    try:
+        # mDNS spec: send 3 queries spaced 0.25-250 ms apart; use 0.5 s
+        for i in range(3):
+            try:
+                sock.sendto(query, ("224.0.0.251", 5353))
+            except OSError:
+                break
+            if i < 2:
+                time.sleep(0.5)
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                ready, _, _ = select.select([sock], [], [],
+                                            max(0.1, deadline - time.time()))
+            except (OSError, ValueError):
+                break
+            if not ready:
+                continue
+            try:
+                data, _addr = sock.recvfrom(65535)
+            except OSError:
+                break
+            for name, ip in _parse_mdns_response(data):
+                if name.endswith("._hue._tcp.local"):
+                    name = name[: -len("._hue._tcp.local")]
+                found.setdefault(ip, name)
+    finally:
+        sock.close()
+
+    return list(found.items())
+
+
+def get_lights(cfg: dict) -> list:
+    """Return the list of all lights from the bridge."""
+    raw = api_request(cfg["bridge_ip"], cfg["client_key"],
+                      "GET", "/lights")
+    # Response is a dict keyed by light ID
+    lights = []
+    for light_id, state in raw.items():
+        lights.append({
+            "id": light_id,
+            "name": state.get("name", light_id),
+            "on": state.get("state", {}).get("on", False),
+            "type": state.get("type", "unknown"),
+        })
+    return lights
+
+
+def set_plug_on(cfg: dict, plug_id: str, on: bool) -> bool:
+    """Set a single plug to on/off.  Returns True on success."""
+    body = {"on": on}
+    api_request(cfg["bridge_ip"], cfg["client_key"],
+                "PUT", f"/lights/{plug_id}/state", body=body)
+    return True
+
+
+def resolve_targets(cfg: dict, name: str) -> list:
+    """Resolve a user-supplied name ('all' or a plug name) to plug dicts.
+
+    Returns a list of plug dicts from the config.
+    """
+    if name == "all":
+        return cfg["plugs"]
+    matches = [p for p in cfg["plugs"] if p["name"] == name]
+    if not matches:
+        known = ", ".join(p["name"] for p in cfg["plugs"])
+        raise HuePlugsError(
+            f"unknown plug name {name!r}. Known: {known}"
+        )
+    return matches
+
+
+def cmd_list(cfg: dict) -> int:
+    """Print the state of all configured plugs."""
+    lights = get_lights(cfg)
+    light_by_id = {l["id"]: l for l in lights}
+
+    print(f"{'NAME':<20} {'HUE ID':<10} {'STATE':<8} {'ON':<6} {'TYPE'}")
+    print("-" * 58)
+    for plug in cfg["plugs"]:
+        pid = str(plug["id"])
+        light = light_by_id.get(pid)
+        if light is None:
+            print(f"{plug['name']:<20} {pid:<10} {'MISSING':<8} {'?':<6} "
+                  f"not found on bridge")
+            continue
+        state = "ON" if light["on"] else "OFF"
+        print(f"{plug['name']:<20} {pid:<10} {state:<8} "
+              f"{'yes' if light['on'] else 'no':<6} {light['type']}")
+    return 0
+
+
+def cmd_stop(cfg: dict, name: str) -> int:
+    """Turn off the named plug(s)."""
+    targets = resolve_targets(cfg, name)
+    failed = 0
+    for plug in targets:
+        try:
+            set_plug_on(cfg, str(plug["id"]), on=False)
+            print(f"  off   {plug['name']} (id {plug['id']})")
+        except HuePlugsError as exc:
+            print(f"  ERROR {plug['name']}: {exc}", file=sys.stderr)
+            failed += 1
+    return 1 if failed else 0
+
+
+def cmd_start(cfg: dict, name: str) -> int:
+    """Turn on the named plug(s)."""
+    targets = resolve_targets(cfg, name)
+    failed = 0
+    for plug in targets:
+        try:
+            set_plug_on(cfg, str(plug["id"]), on=True)
+            print(f"  on    {plug['name']} (id {plug['id']})")
+        except HuePlugsError as exc:
+            print(f"  ERROR {plug['name']}: {exc}", file=sys.stderr)
+            failed += 1
+    return 1 if failed else 0
+
+
+def cmd_restart(cfg: dict, name: str) -> int:
+    """Restart the named plug(s): off, wait, on."""
+    targets = resolve_targets(cfg, name)
+    delay = int(cfg.get("restart_delay", 15))
+    failed = 0
+
+    # Phase 1: turn everything off
+    for plug in targets:
+        try:
+            set_plug_on(cfg, str(plug["id"]), on=False)
+            print(f"  off   {plug['name']} (id {plug['id']})")
+        except HuePlugsError as exc:
+            print(f"  ERROR {plug['name']}: {exc}", file=sys.stderr)
+            failed += 1
+
+    if failed:
+        return 1
+
+    print(f"  waiting {delay}s ...")
+    time.sleep(delay)
+
+    # Phase 2: turn everything back on
+    for plug in targets:
+        try:
+            set_plug_on(cfg, str(plug["id"]), on=True)
+            print(f"  on    {plug['name']} (id {plug['id']})")
+        except HuePlugsError as exc:
+            print(f"  ERROR {plug['name']}: {exc}", file=sys.stderr)
+            failed += 1
+
+    return 1 if failed else 0
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Discover the bridge (mDNS or --bridge-ip) and pair with it.
+
+    Pairs by POSTing to the unauthenticated /api/ endpoint: the first
+    call reports "press the link button", and once the button has been
+    pressed a subsequent call returns the client key ("username").
+    """
+    bridge_ip = args.bridge_ip
+
+    if not bridge_ip:
+        print("Searching for a Hue bridge via mDNS ...")
+        found = mdns_discover()
+        if not found:
+            print("no Hue bridge found on the network", file=sys.stderr)
+            print("run again with --bridge-ip <ip> to pair manually",
+                  file=sys.stderr)
+            return 1
+        for ip, name in found:
+            print(f"  found: {ip} ({name})")
+        if len(found) == 1:
+            bridge_ip = found[0][0]
+        else:
+            choice = input("which bridge? [1]: ").strip() or "1"
+            try:
+                bridge_ip = found[int(choice) - 1][0]
+            except (ValueError, IndexError):
+                print("invalid choice", file=sys.stderr)
+                return 1
+
+    print(f"\npairing with bridge at {bridge_ip}")
+    print("Press the link button on the Hue bridge now.")
+    print("Waiting up to 60 s ...")
+
+    username = None
+    deadline = time.time() + 60
+    body = {"devicetype": PAIR_DEVICETYPE}
+    while time.time() < deadline and not username:
+        try:
+            raw = api_request(bridge_ip, "", "POST", "/", body=body)
+        except HuePlugsError as exc:
+            debug(f"pairing request failed: {exc}")
+            raw = None
+        if isinstance(raw, list):
+            for entry in raw:
+                if not isinstance(entry, dict):
+                    continue
+                if "success" in entry:
+                    username = entry["success"].get("username")
+                    break
+                err = entry.get("error")
+                if not isinstance(err, dict):
+                    continue
+                etype = err.get("type")
+                description = err.get("description", "unknown error")
+                if etype == 101:
+                    # Link button not pressed yet -- keep polling.
+                    continue
+                if etype == 120:
+                    print("bridge has too many registered clients",
+                          file=sys.stderr)
+                    print("delete one in the Hue app, then retry",
+                          file=sys.stderr)
+                    return 1
+                print(f"pairing failed: {description} "
+                      f"(error type {etype})", file=sys.stderr)
+                return 1
+        if not username:
+            time.sleep(2)
+
+    if not username:
+        print("pairing timed out -- make sure the link button was pressed",
+              file=sys.stderr)
+        return 1
+
+    print(f"\npaired. client key: {username}")
+    print(f"bridge ip:      {bridge_ip}")
+
+    if args.save:
+        try:
+            with open(args.config, encoding="utf-8") as fh:
+                cfg = json.load(fh)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            cfg = {}
+        cfg["bridge_ip"] = bridge_ip
+        cfg["client_key"] = username
+        cfg.setdefault("restart_delay", 15)
+        cfg.setdefault("plugs", [])
+        with open(args.config, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=4)
+            fh.write("\n")
+        print(f"saved to {args.config}")
+
+    print("\nfor the Ansible vault:")
+    print(f'  vault_hue_bridge_ip: "{bridge_ip}"')
+    print(f'  vault_hue_client_key: "{username}"')
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    # Defined on both the main parser and every subparser so that --debug
+    # works before or after the command.  SUPPRESS avoids one parser
+    # clobbering the value set by the other.
+    debug_opt = argparse.ArgumentParser(add_help=False)
+    debug_opt.add_argument(
+        "--debug",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="dump raw HTTP requests and responses to stderr",
+    )
+
+    parser = argparse.ArgumentParser(
+        prog="hue-plugs.py",
+        description="Control Philips Hue smart plugs over the Hue API.",
+        parents=[debug_opt],
+    )
+    parser.add_argument(
+        "--config",
+        default=os.environ.get("HUE_PLUGS_CONFIG", DEFAULT_CONFIG),
+        help=f"Path to JSON config file (default: {DEFAULT_CONFIG})",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("list", help="show state of all configured plugs",
+                   parents=[debug_opt])
+
+    for cmd in ("stop", "start", "restart"):
+        p = sub.add_parser(cmd, help=f"{cmd} a plug or all plugs",
+                           parents=[debug_opt])
+        p.add_argument(
+            "name",
+            help="plug name (e.g. 'pc1') or 'all'",
+        )
+
+    p = sub.add_parser(
+        "setup",
+        help="discover the bridge (mDNS) and pair (press link button)",
+        parents=[debug_opt],
+    )
+    p.add_argument(
+        "--bridge-ip",
+        default=None,
+        help="bridge IP; skip mDNS discovery",
+    )
+    p.add_argument(
+        "--save",
+        action="store_true",
+        help="write bridge_ip and client_key into the config file",
+    )
+    return parser
+
+
+def main(argv: list | None = None) -> int:
+    global DEBUG
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    env_debug = os.environ.get("HUE_PLUGS_DEBUG", "").strip().lower()
+    DEBUG = (bool(getattr(args, "debug", False))
+             or env_debug in ("1", "true", "yes", "on"))
+
+    # setup works without a complete config file
+    if args.command == "setup":
+        return cmd_setup(args)
+
+    try:
+        cfg = load_config(args.config)
+    except HuePlugsError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        if args.command == "list":
+            return cmd_list(cfg)
+        if args.command == "stop":
+            return cmd_stop(cfg, args.name)
+        if args.command == "start":
+            return cmd_start(cfg, args.name)
+        if args.command == "restart":
+            return cmd_restart(cfg, args.name)
+    except HuePlugsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
