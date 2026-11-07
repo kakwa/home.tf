@@ -31,6 +31,7 @@
     mode: '0755'
   when: hue_plugs_enable
   become: true
+  tags: [hue-plugs-script]
 
 - name: Deploy hue-plugs config file
   ansible.builtin.template:
