@@ -63,7 +63,7 @@ llama_server_mmproj:
 llama_server_vision: true
 llama_server_mtp: true           # draft-mtp speculative decoding
 llama_server_spec_n_max: 2
-llama_server_ctx_size: 32768
+llama_server_ctx_size: 65536
 llama_server_n_gpu_layers: 99
 llama_server_kv_type: q4_0
 llama_server_n_parallel: 1
