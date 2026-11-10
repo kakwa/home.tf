@@ -1,0 +1,13 @@
+# Managed by Ansible (roles/llama-server). Changes may be overwritten.
+[Unit]
+Description=amdgpu overclock (core {{ llama_server_gpu_oc_core_freq_mhz }} MHz, mem {{ llama_server_gpu_oc_mem_freq_mhz }} MHz, {{ llama_server_gpu_oc_volt_offset_millivolt }} mV, {{ llama_server_gpu_oc_power_cap_w }} W cap)
+After=systemd-udev-settled.service
+ConditionPathExists={{ llama_server_gpu_oc_device }}/pp_od_clk_voltage
+
+[Service]
+Type=oneshot
+ExecStart={{ llama_server_gpu_oc_script }}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+#!/bin/sh
+# Managed by Ansible (roles/llama-server). Changes may be overwritten.
+# amdgpu overclock on {{ llama_server_gpu_oc_device }}:
+# core {{ llama_server_gpu_oc_core_freq_mhz }} MHz, mem {{ llama_server_gpu_oc_mem_freq_mhz }} MHz,
+# {{ llama_server_gpu_oc_volt_offset_millivolt }} mV offset, {{ llama_server_gpu_oc_power_cap_w }} W cap.
+set -eu
+
+D="{{ llama_server_gpu_oc_device }}"
+cd "$D" || exit 1
+
+H=$(echo hwmon/hwmon*)
+
+echo $(( {{ llama_server_gpu_oc_power_cap_w }} * 1000000 )) > "$H/power1_cap"
+echo {{ llama_server_gpu_oc_perf_level }} > power_dpm_force_performance_level
+echo "vo {{ llama_server_gpu_oc_volt_offset_millivolt }}" > pp_od_clk_voltage
+echo "s 1 {{ llama_server_gpu_oc_core_freq_mhz }}" > pp_od_clk_voltage
+echo "m 1 {{ llama_server_gpu_oc_mem_freq_mhz }}" > pp_od_clk_voltage
+echo "c" > pp_od_clk_voltage
+
+echo "--- Result ---"
+cat pp_od_clk_voltage
+echo "Power cap: $(( $(cat "$H/power1_cap") / 1000000 )) W"

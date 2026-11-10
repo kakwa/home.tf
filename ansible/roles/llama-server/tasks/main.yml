@@ -88,3 +88,100 @@
   loop: "{{ llama_server_model_files }}"
   loop_control:
     label: "{{ item.name }}"
+
+# ---------------------------------------------------------------------------
+# GPU overclocking (amdgpu overdrive, see defaults for the values)
+# ---------------------------------------------------------------------------
+# The pp_od sysfs interface only exists once the amdgpu.ppfeaturemask kernel
+# argument is active (reboot required), so the unit carries a
+# ConditionPathExists and the immediate-apply steps below are guarded on the
+# interface being present.
+
+- name: Read /etc/default/grub
+  ansible.builtin.slurp:
+    src: /etc/default/grub
+  register: ls_grub_src
+  when: llama_server_gpu_oc_enable | bool
+
+- name: Parse current GRUB_CMDLINE_LINUX_DEFAULT
+  ansible.builtin.set_fact:
+    ls_grub_cmdline_current: >-
+      {{
+        (ls_grub_src.content | b64decode).splitlines()
+        | select('match', '^GRUB_CMDLINE_LINUX_DEFAULT=')
+        | first | default('')
+        | regex_replace('^GRUB_CMDLINE_LINUX_DEFAULT=', '')
+        | trim
+        | regex_replace('^"|"$', '')
+      }}
+  when: llama_server_gpu_oc_enable | bool
+
+- name: Compute desired GRUB_CMDLINE_LINUX_DEFAULT
+  ansible.builtin.set_fact:
+    ls_grub_oc_arg: "amdgpu.ppfeaturemask={{ llama_server_gpu_oc_ppfeaturemask }}"
+  when: llama_server_gpu_oc_enable | bool
+
+- name: Compute desired GRUB_CMDLINE_LINUX_DEFAULT value
+  ansible.builtin.set_fact:
+    ls_grub_cmdline_desired: >-
+      {{ (ls_grub_cmdline_current.split()
+          + ([ls_grub_oc_arg] if ls_grub_oc_arg not in ls_grub_cmdline_current.split() else []))
+         | join(' ') }}
+  when: llama_server_gpu_oc_enable | bool
+
+- name: Ensure amdgpu.ppfeaturemask is set in GRUB_CMDLINE_LINUX_DEFAULT
+  ansible.builtin.lineinfile:
+    path: /etc/default/grub
+    regexp: '^GRUB_CMDLINE_LINUX_DEFAULT='
+    line: 'GRUB_CMDLINE_LINUX_DEFAULT="{{ ls_grub_cmdline_desired }}"'
+  when: llama_server_gpu_oc_enable | bool
+  notify: update grub
+
+- name: Stat amdgpu overdrive interface
+  ansible.builtin.stat:
+    path: "{{ llama_server_gpu_oc_device }}/pp_od_clk_voltage"
+  register: ls_od_stat
+  when: llama_server_gpu_oc_enable | bool
+
+# Deployed before the script so the "Reload systemd" handler (notified here)
+# is queued before "Apply GPU overclock" (notified below): handlers run in
+# notification order, and the restart must see the freshly reloaded unit.
+- name: Deploy GPU OC systemd unit
+  ansible.builtin.template:
+    src: llama-server-gpu-oc.service.j2
+    dest: "/etc/systemd/system/{{ llama_server_gpu_oc_unit }}"
+    mode: "0644"
+  when: llama_server_gpu_oc_enable | bool
+  notify: Reload systemd
+
+- name: Ensure GPU OC script directory
+  ansible.builtin.file:
+    path: "{{ llama_server_gpu_oc_script | dirname }}"
+    state: directory
+    mode: "0755"
+  when: llama_server_gpu_oc_enable | bool
+
+- name: Deploy GPU OC script
+  ansible.builtin.template:
+    src: llama-server-gpu-oc.sh.j2
+    dest: "{{ llama_server_gpu_oc_script }}"
+    mode: "0755"
+  when: llama_server_gpu_oc_enable | bool
+  notify: Apply GPU overclock
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable GPU OC service
+  ansible.builtin.systemd:
+    name: "{{ llama_server_gpu_oc_unit }}"
+    enabled: true
+  when: llama_server_gpu_oc_enable | bool
+
+- name: Start GPU OC service (overdrive interface available)
+  ansible.builtin.systemd:
+    name: "{{ llama_server_gpu_oc_unit }}"
+    state: started
+  when:
+    - llama_server_gpu_oc_enable | bool
+    - ls_od_stat.stat.exists | default(false)

@@ -1,0 +1,18 @@
+---
+# llama-server role handlers
+
+- name: update grub
+  ansible.builtin.command: update-grub
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: yes
+
+# Guarded on the overdrive interface existing: the pp_od sysfs only appears
+# after the amdgpu.ppfeaturemask kernel argument has taken effect (reboot).
+# Without it the unit is condition-skipped and a "restarted" check would fail.
+- name: Apply GPU overclock
+  ansible.builtin.systemd:
+    name: "{{ llama_server_gpu_oc_unit }}"
+    state: restarted
+  when: ls_od_stat.stat.exists | default(false)

@@ -14,7 +14,7 @@ llama_server_backend: rocm
 # ---------------------------------------------------------------------------
 
 # quant key into llama_server_quants
-llama_server_quant: Q4_K_M
+llama_server_quant: Q4_K_XL
 
 # Pinned to the revision the checksums below were verified against.
 llama_server_hf_repo: "unsloth/Qwen3.8-27B-GGUF"
@@ -63,14 +63,15 @@ llama_server_mmproj:
 llama_server_vision: true
 llama_server_mtp: true           # draft-mtp speculative decoding
 llama_server_spec_n_max: 2
-llama_server_ctx_size: 65536
+llama_server_ctx_size: 49152
 llama_server_n_gpu_layers: 99
 llama_server_kv_type: q4_0
 llama_server_n_parallel: 1
 llama_server_batch_size: 2048
 llama_server_ubatch_size: 512
+llama_server_threads: 8
 llama_server_alias: qwen3.8-27b
-llama_server_listen_host: 0.0.0.0
+llama_server_listen_host: 127.0.0.1
 llama_server_listen_port: 8080
 llama_server_endpoint_metrics: true
 # Optional llama.cpp-level API key. The TLS proxy enforces its own Bearer
@@ -93,6 +94,37 @@ llama_server_service_groups:
 llama_server_health_host: 127.0.0.1
 llama_server_health_retries: 60
 llama_server_health_delay: 5
+
+# ---------------------------------------------------------------------------
+# GPU overclocking (amdgpu, RX 7900 XT)
+# ---------------------------------------------------------------------------
+#
+# Overdrive (pp_od_clk_voltage) is gated behind a bit of the amdgpu powerplay
+# feature mask, so the kernel command-line argument below is written to
+# GRUB_CMDLINE_LINUX_DEFAULT (takes effect after a reboot). The frequencies,
+# voltage offset and power cap are applied at every boot by
+# llama-server-gpu-oc.service, and immediately on every role run.
+#
+# Values below were validated manually on this host before being imported.
+
+llama_server_gpu_oc_enable: true
+
+# amdgpu DRM device to tune.
+llama_server_gpu_oc_device: /sys/class/drm/card0/device
+
+# Kernel argument enabling the overdrive sysfs interface.
+llama_server_gpu_oc_ppfeaturemask: "0xfff7ffff"
+
+# Tuning values.
+llama_server_gpu_oc_power_cap_w: 333           # power1_cap (watts)
+llama_server_gpu_oc_perf_level: manual         # power_dpm_force_performance_level
+llama_server_gpu_oc_core_freq_mhz: 3000        # pp_od_clk_voltage "s 1 <MHz>"
+llama_server_gpu_oc_mem_freq_mhz: 1350         # pp_od_clk_voltage "m 1 <MHz>"
+llama_server_gpu_oc_volt_offset_millivolt: -60 # pp_od_clk_voltage "vo <mV>"
+
+# Deployed script and unit.
+llama_server_gpu_oc_unit: llama-server-gpu-oc.service
+llama_server_gpu_oc_script: /usr/local/lib/llama-server/gpu-oc.sh
 
 # ---------------------------------------------------------------------------
 # nginx TLS reverse proxy
