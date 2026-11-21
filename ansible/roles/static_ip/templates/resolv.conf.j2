@@ -1,0 +1,7 @@
+# Managed by Ansible (static_ip role)
+{% for ns in static_ip_dns_servers %}
+nameserver {{ ns }}
+{% endfor %}
+{% if static_ip_resolvconf_search | length > 0 %}
+search {{ static_ip_resolvconf_search | join(' ') }}
+{% endif %}

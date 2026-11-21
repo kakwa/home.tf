@@ -1,0 +1,52 @@
+# Managed by Ansible (roles/llama-server)
+# Proxy for {{ llama_server_nginx_server_names | first }} LLM inference server
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+
+    server_name {{ llama_server_nginx_server_names | first }};
+
+    # SSL certificates
+    ssl_certificate {{ llama_server_nginx_ssl_cert }};
+    ssl_certificate_key {{ llama_server_nginx_ssl_key }};
+    ssl_protocols TLSv1.3 TLSv1.2;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # Bearer token enforcement
+    if ($http_authorization !~ "^Bearer\s+{{ llama_server_nginx_bearer_key }}$") {
+        return 403 "Invalid or missing bearer token";
+    }
+
+    # Proxy to llama.cpp server
+    location / {
+        proxy_pass http://{{ llama_server_health_host }}:{{ llama_server_listen_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Authorization "Bearer {{ llama_server_nginx_bearer_key }}";
+
+        # Increase timeouts for LLM generation
+        proxy_read_timeout 3600;
+        proxy_connect_timeout 3600;
+        proxy_send_timeout 3600;
+
+        # Enable WebSocket support for streaming
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    # Serve the Svelte UI
+    location /ui/ {
+        root {{ llama_server_nginx_ui_root }};
+        index index.html;
+        try_files $uri $uri/ =404;
+    }
+
+    # Health check endpoint
+    location /health {
+        access_log off;
+        proxy_pass http://{{ llama_server_health_host }}:{{ llama_server_listen_port }}/health;
+    }
+}

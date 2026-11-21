@@ -22,4 +22,5 @@ This code is heavily tied to my environment. Don't expect to reuse it. At most, 
 * Talos K8s cluster
 * Docker Registry on a classic VM
 * Ldap Server on a classic VM
-* Bits of libvirtd hypervisor configuration
+* Proxmox VE hypervisor host setup (no-subscription repo, packages, nested virtualization)
+* llama.cpp AI server on a separate host (ROCm, Wake-on-LAN, idle suspend)

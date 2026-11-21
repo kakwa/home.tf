@@ -1,8 +1,18 @@
 ---
-- name: Hypervisory Server Setup
+- name: Hypervisor Server Setup
   hosts: all
   become: true
+  # The external repos role uses deb822_repository; allow it to install its
+  # python3-debian requirement automatically if a host is missing it.
+  module_defaults:
+    ansible.builtin.deb822_repository:
+      install_python_debian: true
+  vars:
+    avahi_hostname: "kvm"
+    avahi_additional_hostnames: []
   roles:
+    - { role: os_config, tags: ["system", "os_config"] }
+    - { role: static_ip, tags: ["system", "network", "static_ip"] }
     - { role: repos, tags: ["system", "repos"] }
     - { role: misc-base, tags: ["system", "misc-base"] }
     - { role: root_ssh, tags: ["system", "ssh"] }
@@ -14,12 +24,8 @@
     # LVM role - set lvm_enable: true when ready to set up storage
     # WARNING: This will wipe data on configured devices!
     #- { role: lvm, vars: { lvm_enable: true, lvm_force_recreate: true }, tags: ["hypervisor", "storage", "lvm"] }
-    - { role: libvirt, tags: ["hypervisor", "virtualization", "libvirt"] }
+    - { role: proxmox, tags: ["hypervisor", "virtualization", "proxmox"] }
     - role: terraform-sync
       vars:
         terraform_sync_src: "{{ playbook_dir }}/../terraform"
       tags: ["hypervisor", "terraform-sync"]
-    - role: llama-server
-      tags: ["ai", "llama"]
-    - role: wake-on-line_llama
-      tags: ["ai", "power", "wol"]

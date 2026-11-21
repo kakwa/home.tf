@@ -1,0 +1,44 @@
+---
+# Static IPv4 configuration through /etc/network/interfaces (ifupdown).
+#
+# Mapping comes from the inventory, keyed by interface name. Gateway and DNS
+# are per-NIC on purpose: there are no global defaults.
+#
+#   static_ip_nics:
+#     enp9s0:
+#       address: 192.168.1.20/24
+#       gateway: 192.168.1.254
+#       dns: [192.168.1.25]
+#     vmbr0:                       # a bridge is just another interface here
+#       address: 192.168.1.229/24
+#       gateway: 192.168.1.254
+#       dns: [192.168.1.25]
+#       bridge_ports: [enp9s0]     # ports get `inet manual` stanzas
+#       bridge_stp: off
+#       bridge_fd: 0
+#       mtu: 1500                  # optional
+static_ip_nics: {}
+
+static_ip_interfaces_file: /etc/network/interfaces
+static_ip_marker: "# {mark} ANSIBLE MANAGED BLOCK - static_ip"
+
+# Ensure the standard loopback stanzas exist.
+static_ip_ensure_loopback: true
+
+# Apply the config right away: `ifreload -a` when ifupdown2 is present,
+# otherwise ifdown/ifup for each managed interface. Disable to write only.
+static_ip_apply: true
+
+# Safety: detect the interface carrying the current Ansible/SSH connection
+# (`ip route get <ansible_host>`) and never bring it down. The config is still
+# written, and the role warns that a manual apply/reboot is needed.
+static_ip_protect_connection: true
+# Escape hatch for console access: apply even if the connection interface is
+# managed. This can drop SSH mid-run.
+static_ip_force_apply: false
+
+# Write /etc/resolv.conf as well, but only when it is a regular file
+# (a symlink usually means systemd-resolved owns it).
+static_ip_manage_resolvconf: true
+static_ip_resolvconf_path: /etc/resolv.conf
+static_ip_resolvconf_search: []

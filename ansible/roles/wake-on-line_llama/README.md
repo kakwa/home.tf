@@ -88,11 +88,14 @@ Custom configuration:
         ai_power_poll_interval: 60
 ```
 
-`ai.local` is a physical host and is not part of the Terraform-generated inventory, so run it with an inline inventory:
+`ai.local` is a physical host with a static entry in the default `inventory.yml`, so run it with:
 
 ```bash
-ansible-playbook -i "ai.local ansible_host=192.168.1.20 ansible_user=root," ai.yml
+ansible-playbook --limit ai ai.yml
 ```
+
+Direct root SSH login is disabled; use the `kakwa` account (or override
+`ansible_user` in the inventory) with sudo.
 
 ## How It Works
 

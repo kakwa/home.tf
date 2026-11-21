@@ -1,6 +1,6 @@
 # Avahi mDNS/Zeroconf Role
 
-This Ansible role configures Avahi for mDNS/Zeroconf service discovery, allowing the hypervisor to be accessed via `.local` hostnames on the local network.
+This Ansible role configures Avahi for mDNS/Zeroconf service discovery, allowing hosts to be accessed via `.local` hostnames on the local network.
 
 ## Description
 
@@ -23,8 +23,8 @@ Avahi is the Linux implementation of Apple's Bonjour/Zeroconf. This role configu
 ## Role Variables
 
 ### Hostname Configuration
-- `avahi_hostname`: Primary hostname to announce (default: `"kvm"` - set to `""` to use system hostname)
-- `avahi_additional_hostnames`: List of additional hostname aliases, each resolvable as `<name>.local` (default: `["ai", "kvm"]`). Each entry gets a systemd unit running `avahi-publish -a` that announces an A record for the name
+- `avahi_hostname`: Primary hostname to announce (default: `""` - use system hostname). Set per playbook: `kvm` in `hypervisor.yml`, `ai` in `ai.yml`
+- `avahi_additional_hostnames`: List of additional hostname aliases, each resolvable as `<name>.local` (default: `[]`). Each entry gets a systemd unit running `avahi-publish -a` that announces an A record for the name
 - `avahi_lan_ip`: LAN IP address published by the alias units. Empty (default) auto-detects the primary IPv4 address from facts, falling back to `ansible_host`
 - `avahi_domain_name`: Domain name to use (default: `"local"`)
 
@@ -56,17 +56,16 @@ Avahi is the Linux implementation of Apple's Bonjour/Zeroconf. This role configu
     - role: avahi
       tags: ["network", "avahi"]
       vars:
+        avahi_hostname: "kvm"
         avahi_additional_hostnames:
-          - "kvm"
           - "hypervisor"
 ```
 
 ## Usage
 
-After running this role, the system will be accessible at:
-
-- `kvm.local` (primary hostname announced by avahi-daemon)
-- `ai.local` (additional alias, same machine)
+After running this role, the system will be accessible at the configured
+`<avahi_hostname>.local` (e.g. `kvm.local` from `hypervisor.yml` or `ai.local`
+from `ai.yml`), plus any aliases in `avahi_additional_hostnames`.
 
 You can test the configuration:
 

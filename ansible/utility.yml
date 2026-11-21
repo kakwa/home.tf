@@ -3,6 +3,11 @@
 - name: Utility VM Setup
   hosts: all
   become: true
+  # The external repos role uses deb822_repository; allow it to install its
+  # python3-debian requirement automatically if a host is missing it.
+  module_defaults:
+    ansible.builtin.deb822_repository:
+      install_python_debian: true
   vars:
     openldap_domain: "kakwalab.ovh"
     certbot_letsencrypt_enable: true
@@ -12,6 +17,7 @@
       - "registry.int.{{ openldap_domain }}"
       - "ldap.int.{{ openldap_domain }}"
   roles:
+    - { role: os_config, tags: ["system", "os_config"] }
     - { role: repos, tags: ["system", "repos"] }
     - { role: misc-base, tags: ["system", "misc-base"] }
     - { role: vim, tags: ["system", "vim"] }

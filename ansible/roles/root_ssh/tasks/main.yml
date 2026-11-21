@@ -5,26 +5,16 @@
     state: directory
     mode: '0755'
 
-- name: Configure PermitRootLogin
-  copy:
-    content: |
-      PermitRootLogin {{ ssh_permit_root_login }}
-    dest: /etc/ssh/sshd_config.d/99-allow-root.conf
-    mode: '0644'
+- name: Remove deprecated root-login drop-in
+  ansible.builtin.file:
+    path: "{{ ssh_permit_root_login_conf_deprecated }}"
+    state: absent
   notify: restart ssh
 
-- name: Ensure root .ssh directory exists
-  file:
-    path: /root/.ssh
-    state: directory
-    mode: '0700'
-    owner: root
-    group: root
-
-- name: Set root authorized_keys
-  copy:
-    content: "{{ ssh_root_authorized_keys | join('\n') }}\n"
-    dest: /root/.ssh/authorized_keys
-    mode: '0600'
-    owner: root
-    group: root
+- name: Configure PermitRootLogin
+  ansible.builtin.copy:
+    content: |
+      PermitRootLogin {{ ssh_permit_root_login }}
+    dest: "{{ ssh_permit_root_login_conf }}"
+    mode: '0644'
+  notify: restart ssh

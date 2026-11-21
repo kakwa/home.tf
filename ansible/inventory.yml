@@ -1,0 +1,44 @@
+---
+# Static inventory for the physical homelab hosts.
+#
+# The NIC -> IP mapping is per host under `static_ip_nics`; it is consumed by
+# the `static_ip` role (see roles/static_ip/README.md). Each NIC carries its
+# own address, gateway and DNS - there are no global network defaults.
+#
+# The utility VM is intentionally absent: it is provisioned by Terraform and
+# gets its network config from cloud-init/netplan. Use
+# `ansible-playbook -i ../terraform/inventory.yml utility.yml` for that host.
+all:
+  vars:
+    ansible_user: kakwa
+  children:
+    hypervisor:
+      hosts:
+        kvm:
+          ansible_host: 192.168.1.30
+          # Publish the static address immediately, before facts are refreshed
+          # after a network change.
+          avahi_lan_ip: 192.168.1.30
+          # The static_ip role manages the bridge; do not let proxmox write a
+          # second stanza into /etc/network/interfaces.
+          pve_configure_bridge: false
+          # TODO: fill in the NIC name once known. On PVE this is usually the
+          # bridge (vmbr0) rather than the physical port:
+          #   static_ip_nics:
+          #     vmbr0:
+          #       address: 192.168.1.30/24
+          #       gateway: 192.168.1.254
+          #       dns: [192.168.1.25]
+          #       bridge_ports: [enp9s0]   # replace with the real NIC
+          static_ip_nics: {}
+    ai_servers:
+      hosts:
+        ai:
+          ansible_host: 192.168.1.20
+          avahi_lan_ip: 192.168.1.20
+          static_ip_nics:
+            enp9s0:
+              address: 192.168.1.20/24
+              gateway: 192.168.1.254
+              dns:
+                - 192.168.1.254

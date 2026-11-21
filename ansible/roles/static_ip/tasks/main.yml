@@ -1,0 +1,221 @@
+---
+- name: Determine whether static IP configuration is enabled
+  ansible.builtin.set_fact:
+    static_ip_enabled: "{{ static_ip_nics | default({}) | length > 0 }}"
+
+- name: Validate the static IP mapping
+  ansible.builtin.assert:
+    that:
+      - static_ip_nics is mapping
+    fail_msg: "static_ip_nics must be a mapping of interface name -> settings"
+  when: static_ip_enabled | bool
+
+- name: Validate each NIC entry
+  ansible.builtin.assert:
+    that:
+      - item.key is match('^[a-zA-Z][a-zA-Z0-9_.:-]*$')
+      - item.value is mapping
+      - item.value.address is defined
+      - item.value.address is match('^[0-9a-fA-F:.]+/[0-9]{1,3}$')
+      - item.value.gateway is defined
+      - item.value.dns is defined
+      - item.value.dns is sequence and item.value.dns is not string
+    fail_msg: >-
+      Invalid static_ip_nics entry '{{ item.key }}': address (CIDR), gateway
+      and dns (list) are required. Use gateway: null / dns: [] to omit them.
+  loop: "{{ static_ip_nics | dict2items }}"
+  when: static_ip_enabled | bool
+
+- name: Collect configured gateways
+  ansible.builtin.set_fact:
+    static_ip_gateways: "{{ static_ip_nics | dict2items | map(attribute='value.gateway') | select('defined') | reject('none') | reject('equalto', '') | list }}"
+  when: static_ip_enabled | bool
+
+- name: Ensure at most one default gateway
+  ansible.builtin.assert:
+    that: static_ip_gateways | length <= 1
+    fail_msg: "Only one NIC may set a default gateway, got: {{ static_ip_gateways | join(', ') }}"
+  when: static_ip_enabled | bool
+
+- name: Collect bridge ports and DNS servers
+  ansible.builtin.set_fact:
+    static_ip_bridge_ports: "{{ (static_ip_nics.values() | map(attribute='bridge_ports') | select('defined') | reject('none') | flatten | unique | list) | difference(static_ip_nics.keys() | list) }}"
+    static_ip_dns_servers: "{{ static_ip_nics.values() | map(attribute='dns') | select('defined') | reject('none') | flatten | unique | list }}"
+  when: static_ip_enabled | bool
+
+- name: Build the list of interfaces to cycle on apply
+  ansible.builtin.set_fact:
+    static_ip_apply_interfaces: "{{ (static_ip_nics.keys() | list + static_ip_bridge_ports) | unique | list }}"
+  when: static_ip_enabled | bool
+
+- name: Warn about a possible SSH interruption
+  ansible.builtin.debug:
+    msg: >-
+      Applying static IP changes can briefly interrupt SSH on the managed
+      interfaces. The interface carrying the current connection is protected
+      by default; set static_ip_apply: false to write config only.
+  when:
+    - static_ip_apply | bool
+    - static_ip_enabled | bool
+
+- name: Ensure loopback stanzas exist
+  ansible.builtin.lineinfile:
+    path: "{{ static_ip_interfaces_file }}"
+    line: "{{ item }}"
+    create: true
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - auto lo
+    - iface lo inet loopback
+  when:
+    - static_ip_ensure_loopback | bool
+    - static_ip_enabled | bool
+
+- name: Write static interface stanzas
+  ansible.builtin.blockinfile:
+    path: "{{ static_ip_interfaces_file }}"
+    marker: "{{ static_ip_marker }}"
+    create: true
+    owner: root
+    group: root
+    mode: '0644'
+    block: |
+      {% for nic, cfg in static_ip_nics.items() %}
+      auto {{ nic }}
+      iface {{ nic }} inet static
+          address {{ cfg.address }}
+      {% if cfg.gateway is defined and cfg.gateway %}
+          gateway {{ cfg.gateway }}
+      {% endif %}
+      {% if cfg.dns is defined and cfg.dns | length > 0 %}
+          dns-nameservers {{ cfg.dns | join(' ') }}
+      {% endif %}
+      {% if cfg.bridge_ports is defined and cfg.bridge_ports %}
+          bridge_ports {{ cfg.bridge_ports | join(' ') }}
+      {% endif %}
+      {% if cfg.bridge_stp is defined %}
+          bridge_stp {{ 'on' if cfg.bridge_stp | bool else 'off' }}
+      {% endif %}
+      {% if cfg.bridge_fd is defined %}
+          bridge_fd {{ cfg.bridge_fd }}
+      {% endif %}
+      {% if cfg.mtu is defined %}
+          mtu {{ cfg.mtu }}
+      {% endif %}
+
+      {% endfor %}
+      {% for port in static_ip_bridge_ports %}
+      iface {{ port }} inet manual
+      {% endfor %}
+  when: static_ip_enabled | bool
+  register: static_ip_interfaces_result
+
+- name: Check whether resolv.conf is a regular file
+  ansible.builtin.stat:
+    path: "{{ static_ip_resolvconf_path }}"
+  register: static_ip_resolvconf_stat
+  when:
+    - static_ip_manage_resolvconf | bool
+    - static_ip_enabled | bool
+
+- name: Keep resolv.conf in sync with the per-NIC DNS lists
+  ansible.builtin.template:
+    src: resolv.conf.j2
+    dest: "{{ static_ip_resolvconf_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  when:
+    - static_ip_manage_resolvconf | bool
+    - static_ip_enabled | bool
+    - static_ip_resolvconf_stat.stat.exists
+    - not static_ip_resolvconf_stat.stat.islnk
+
+- name: Check for ifupdown2 ifreload
+  ansible.builtin.shell: command -v ifreload
+  register: static_ip_ifreload
+  changed_when: false
+  failed_when: false
+  when:
+    - static_ip_apply | bool
+    - static_ip_enabled | bool
+
+- name: Detect the interface carrying the current connection
+  ansible.builtin.shell: |
+    target="{{ ansible_host | default(inventory_hostname) }}"
+    if command -v ip >/dev/null 2>&1; then
+      ip -o route get "$target" 2>/dev/null | sed -n 's/.* dev \([^[:space:]]*\).*/\1/p' | head -n 1
+    fi
+  register: static_ip_connection_iface
+  changed_when: false
+  failed_when: false
+  when:
+    - static_ip_apply | bool
+    - static_ip_enabled | bool
+    - static_ip_protect_connection | bool
+
+- name: Decide whether applying would interrupt the connection
+  ansible.builtin.set_fact:
+    static_ip_connected_interface: "{{ static_ip_connection_iface.stdout | default('') | trim }}"
+    static_ip_skip_apply: >-
+      {{ static_ip_protect_connection | bool
+         and not (static_ip_force_apply | bool)
+         and (static_ip_connection_iface.stdout | default('') | trim) in static_ip_apply_interfaces }}
+  when:
+    - static_ip_apply | bool
+    - static_ip_enabled | bool
+
+- name: Warn when the connection interface would be disrupted
+  ansible.builtin.debug:
+    msg: >-
+      Skipping network apply: {{ static_ip_connected_interface }} carries the
+      current Ansible/SSH connection and is in the managed interface list. The
+      config is written but not activated - apply it from the console or after
+      rebooting, or set static_ip_force_apply: true to override.
+  when:
+    - static_ip_apply | bool
+    - static_ip_enabled | bool
+    - static_ip_skip_apply | bool
+
+- name: Reload all interfaces with ifupdown2
+  ansible.builtin.command: ifreload -a
+  when:
+    - static_ip_apply | bool
+    - static_ip_enabled | bool
+    - static_ip_ifreload.rc == 0
+    - static_ip_interfaces_result is changed or static_ip_force_apply | bool
+    - not static_ip_skip_apply | bool
+  changed_when: true
+
+- name: Bring managed interfaces down with plain ifupdown
+  ansible.builtin.shell: "ifdown --force {{ item }} >/dev/null 2>&1 || true"
+  loop: "{{ static_ip_apply_interfaces }}"
+  when:
+    - static_ip_apply | bool
+    - static_ip_enabled | bool
+    - static_ip_ifreload.rc != 0
+    - static_ip_interfaces_result is changed or static_ip_force_apply | bool
+    - not static_ip_skip_apply | bool
+  changed_when: true
+
+- name: Bring managed interfaces up with plain ifupdown
+  ansible.builtin.shell: "ifup {{ item }}"
+  loop: "{{ static_ip_apply_interfaces }}"
+  when:
+    - static_ip_apply | bool
+    - static_ip_enabled | bool
+    - static_ip_ifreload.rc != 0
+    - static_ip_interfaces_result is changed or static_ip_force_apply | bool
+    - not static_ip_skip_apply | bool
+  changed_when: true
+
+- name: Show static IP summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Static IP Configuration ==="
+      - "Interfaces: {{ static_ip_nics.keys() | list | join(', ') }}"
+      - "Connection interface: {{ static_ip_connected_interface | default('unknown') }}"
+      - "Applied: {{ 'no (connection interface protected)' if static_ip_skip_apply | default(false) | bool else ('yes' if static_ip_apply | bool else 'no (config written only)') }}"
+  when: static_ip_enabled | bool

@@ -14,7 +14,7 @@ llama_server_backend: rocm
 # ---------------------------------------------------------------------------
 
 # quant key into llama_server_quants
-llama_server_quant: Q4_K_XL
+llama_server_quant: Q4_K_S
 
 # Pinned to the revision the checksums below were verified against.
 llama_server_hf_repo: "unsloth/Qwen3.8-27B-GGUF"
@@ -61,9 +61,10 @@ llama_server_mmproj:
 # ---------------------------------------------------------------------------
 
 llama_server_vision: true
+llama_server_mmproj_offload: false    # use system RAM for vision model (disable GPU offload)
 llama_server_mtp: true           # draft-mtp speculative decoding
-llama_server_spec_n_max: 2
-llama_server_ctx_size: 40960 
+llama_server_spec_n_max: 3
+llama_server_ctx_size: 100000 
 llama_server_n_gpu_layers: 99
 llama_server_kv_type: q4_0
 llama_server_n_parallel: 1
@@ -134,9 +135,10 @@ llama_server_nginx_enable: true
 llama_server_nginx_server_names:
   - ai.local
   - kvm.local
-# Bearer key enforced by nginx (not by llama.cpp). LAN-only box; override
-# per-environment if you ever expose this differently.
-llama_server_nginx_bearer_key: "w69oIuVJ0xTsAUR3SdRFIQ3Y6qOoZVdL"
+# Bearer key enforced by nginx (not by llama.cpp). Read from a gitignored
+# file next to the playbook when present; override per-environment if needed.
+llama_server_nginx_bearer_key_file: "{{ playbook_dir }}/.llama-bearer-key"
+llama_server_nginx_bearer_key: ""
 llama_server_nginx_ui_root: /usr/share/llama.cpp-svelte-ui
 # Self-signed cert, generated when missing (RSA 4096, 10 years).
 llama_server_nginx_ssl_cert: /etc/nginx/ssl/ai.local.crt

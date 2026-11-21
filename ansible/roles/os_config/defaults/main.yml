@@ -1,0 +1,14 @@
+---
+# OS-level settings shared by all hosts.
+
+# Write /etc/apt/apt.conf.d/99no-recommends so apt does not pull in
+# packages marked as "Recommended" (Ansible's apt module respects this:
+# its install_recommends option defaults to the OS setting).
+os_config_apt_disable_recommends: true
+os_config_apt_conf_dir: /etc/apt/apt.conf.d
+os_config_apt_recommends_conf: "{{ os_config_apt_conf_dir }}/99no-recommends"
+
+# Base packages installed on every host (man-db provides the `man` command
+# on Debian; the `man` package name does not exist there).
+os_config_packages:
+  - man-db

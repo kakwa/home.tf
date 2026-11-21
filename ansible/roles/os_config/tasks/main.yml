@@ -1,0 +1,23 @@
+---
+- name: Disable APT recommended packages
+  ansible.builtin.copy:
+    dest: "{{ os_config_apt_recommends_conf }}"
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Managed by Ansible (os_config role)
+      APT::Install-Recommends "false";
+  when: os_config_apt_disable_recommends | bool
+
+- name: Restore APT recommended packages
+  ansible.builtin.file:
+    path: "{{ os_config_apt_recommends_conf }}"
+    state: absent
+  when: not (os_config_apt_disable_recommends | bool)
+
+- name: Install base OS packages
+  ansible.builtin.apt:
+    name: "{{ os_config_packages }}"
+    state: present
+  when: os_config_packages | length > 0

@@ -16,3 +16,13 @@
     name: "{{ llama_server_gpu_oc_unit }}"
     state: restarted
   when: ls_od_stat.stat.exists | default(false)
+
+- name: Restart llama-server
+  ansible.builtin.systemd:
+    name: llama-server
+    state: restarted
+
+- name: Reload nginx
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded

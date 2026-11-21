@@ -2,6 +2,12 @@
 
 OpenTofu/Terraform code to deploy a simple K8S/Talos Cluster
 
+> **Note:** The Ansible `hypervisor.yml` playbook now installs Proxmox VE
+> instead of libvirt/KVM. This Terraform code still uses the
+> `dmacvicar/libvirt` provider (`qemu:///system`) and has not been migrated to
+> the Proxmox provider, so it will not work against a host where libvirtd is no
+> longer available.
+
 # Item Configured
 
 - **Talos base image** — pulled from the [Talos Image Factory](https://factory.talos.dev) into `mid-pool` (`talos-base.qcow2`) with system extensions (default: `binfmt-misc`); version `v1.12.6`, platform `nocloud`/`amd64`.

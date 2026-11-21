@@ -1,7 +1,9 @@
 ---
-# SSH daemon and root authorized_keys for hypervisor
+# SSH daemon and root authorized_keys for the physical hosts.
+# Direct root login over SSH is disabled: use a normal account + sudo.
+ssh_permit_root_login: "no"
 
-ssh_permit_root_login: "prohibit-password"
-
-ssh_root_authorized_keys:
-  - "ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAzODQAAAAIbmlzdHAzODQAAABhBIefJ3PQVyfXunlkWc6Ukdw8EZNw8sLX1Pda0p+PckY/maze5K298CiSuE+5LR/9RM5lwx8N8NqnuKTUUSHsfs58jI03RNAuFHaT4Sc6PKS7SfG9t3ZDkCVSdn5Csopwgg== kakwa@tsingtao"
+# Drop-in locations. The old filename is removed so two conflicting
+# PermitRootLogin directives cannot coexist.
+ssh_permit_root_login_conf: /etc/ssh/sshd_config.d/99-root-login.conf
+ssh_permit_root_login_conf_deprecated: /etc/ssh/sshd_config.d/99-allow-root.conf

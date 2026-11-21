@@ -27,6 +27,7 @@
       - ca-certificates
       - llama.cpp-svelte-ui
       - "{{ llama_server_backend_package }}"
+      - rocm-smi
     state: present
     update_cache: true
     install_recommends: false
@@ -185,3 +186,168 @@
   when:
     - llama_server_gpu_oc_enable | bool
     - ls_od_stat.stat.exists | default(false)
+
+# ---------------------------------------------------------------------------
+# llama-server service configuration
+# ---------------------------------------------------------------------------
+
+- name: Read nginx bearer key from file when present
+  ansible.builtin.set_fact:
+    llama_server_nginx_bearer_key: "{{ lookup('ansible.builtin.file', llama_server_nginx_bearer_key_file) | trim }}"
+  when:
+    - llama_server_nginx_enable | bool
+    - (llama_server_nginx_bearer_key | default('') | length) == 0
+    - llama_server_nginx_bearer_key_file is file
+
+- name: Fail if nginx bearer key is missing
+  ansible.builtin.assert:
+    that:
+      - llama_server_nginx_bearer_key | length > 0
+    fail_msg: >-
+      llama_server_nginx_bearer_key is empty. Set it or create
+      {{ llama_server_nginx_bearer_key_file }} (gitignored).
+  when: llama_server_nginx_enable | bool
+
+- name: Ensure llama-server service user is in device groups
+  ansible.builtin.user:
+    name: "{{ llama_server_service_user }}"
+    groups: "{{ llama_server_service_groups }}"
+    append: true
+
+- name: Deploy llama-server environment file
+  ansible.builtin.template:
+    src: llama-server.env.j2
+    dest: /etc/default/llama-server
+    mode: "0644"
+  notify: Restart llama-server
+
+- name: Ensure llama-server systemd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/llama-server.service.d
+    state: directory
+    mode: "0755"
+
+- name: Deploy llama-server systemd drop-in for device groups
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/llama-server.service.d/override.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/llama-server)
+      [Service]
+      SupplementaryGroups={{ llama_server_service_groups | join(' ') }}
+  notify:
+    - Reload systemd
+    - Restart llama-server
+
+- name: Flush handlers before starting llama-server
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start llama-server service
+  ansible.builtin.systemd:
+    name: llama-server
+    enabled: true
+    state: started
+
+- name: Wait for llama-server health endpoint
+  ansible.builtin.uri:
+    url: "http://{{ llama_server_health_host }}:{{ llama_server_listen_port }}/health"
+    method: GET
+    status_code: 200
+  register: ls_health
+  retries: "{{ llama_server_health_retries }}"
+  delay: "{{ llama_server_health_delay }}"
+  until: ls_health.status == 200
+  changed_when: false
+
+# ---------------------------------------------------------------------------
+# Nginx TLS reverse proxy
+# ---------------------------------------------------------------------------
+
+- name: Ensure nginx is installed
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+    install_recommends: false
+  when: llama_server_nginx_enable | bool
+
+- name: Ensure nginx SSL directory exists
+  ansible.builtin.file:
+    path: "{{ llama_server_nginx_ssl_cert | dirname }}"
+    state: directory
+    mode: "0755"
+  when: llama_server_nginx_enable | bool
+
+- name: Check for existing nginx SSL certificate
+  ansible.builtin.stat:
+    path: "{{ llama_server_nginx_ssl_cert }}"
+  register: ls_nginx_cert
+  when: llama_server_nginx_enable | bool
+
+- name: Check for existing nginx SSL key
+  ansible.builtin.stat:
+    path: "{{ llama_server_nginx_ssl_key }}"
+  register: ls_nginx_key
+  when: llama_server_nginx_enable | bool
+
+- name: Generate self-signed nginx SSL certificate if missing
+  ansible.builtin.command:
+    cmd: >-
+      openssl req -x509 -newkey rsa:4096 -nodes
+      -keyout {{ llama_server_nginx_ssl_key }}
+      -out {{ llama_server_nginx_ssl_cert }}
+      -days 3650
+      -subj "/CN={{ llama_server_nginx_server_names | first }}"
+  when:
+    - llama_server_nginx_enable | bool
+    - not (ls_nginx_cert.stat.exists | default(false) and ls_nginx_key.stat.exists | default(false))
+  notify: Reload nginx
+
+- name: Ensure nginx SSL key permissions
+  ansible.builtin.file:
+    path: "{{ llama_server_nginx_ssl_key }}"
+    mode: "0640"
+    owner: root
+    group: www-data
+  when:
+    - llama_server_nginx_enable | bool
+
+- name: Ensure nginx SSL cert permissions
+  ansible.builtin.file:
+    path: "{{ llama_server_nginx_ssl_cert }}"
+    mode: "0644"
+    owner: root
+    group: root
+  when:
+    - llama_server_nginx_enable | bool
+
+- name: Deploy nginx TLS reverse proxy vhost
+  ansible.builtin.template:
+    src: llama-server-nginx.conf.j2
+    dest: "/etc/nginx/sites-available/{{ llama_server_nginx_server_names | first }}"
+    mode: "0644"
+  when: llama_server_nginx_enable | bool
+  notify: Reload nginx
+
+- name: Enable nginx vhost symlink
+  ansible.builtin.file:
+    src: "/etc/nginx/sites-available/{{ llama_server_nginx_server_names | first }}"
+    dest: "/etc/nginx/sites-enabled/{{ llama_server_nginx_server_names | first }}"
+    state: link
+    force: true
+  when: llama_server_nginx_enable | bool
+  notify: Reload nginx
+
+- name: Ensure default nginx site is disabled
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  when: llama_server_nginx_enable | bool
+  notify: Reload nginx
+
+- name: Enable and start nginx
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+    state: started
+  when: llama_server_nginx_enable | bool

@@ -1,0 +1,170 @@
+---
+# Proxmox VE repository setup: https://pve.proxmox.com/wiki/Package_Repositories
+
+- name: Validate Proxmox VE suite
+  ansible.builtin.assert:
+    that:
+      - pve_suite in pve_supported_suites or pve_allow_unsupported_suite | bool
+    fail_msg: >-
+      Proxmox does not publish a '{{ pve_suite }}' repository (supported:
+      {{ pve_supported_suites | join(', ') }}). Set pve_suite to a supported
+      value, or set pve_allow_unsupported_suite: true if you know what you are
+      doing.
+  when: pve_suite not in pve_supported_suites
+
+- name: Warn when forcing an unsupported suite
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: '{{ pve_suite }}' has no official Proxmox repository; apt will
+      fail unless you supply one. Proceeding because
+      pve_allow_unsupported_suite is true.
+  when:
+    - pve_suite not in pve_supported_suites
+    - pve_allow_unsupported_suite | bool
+
+- name: Check for Proxmox archive keyring
+  ansible.builtin.stat:
+    path: "{{ pve_keyring_path }}"
+  register: pve_keyring
+
+- name: Install Proxmox archive keyring
+  ansible.builtin.get_url:
+    url: "{{ pve_keyring_url }}"
+    dest: "{{ pve_keyring_path }}"
+    checksum: "{{ pve_keyring_checksum }}"
+    mode: '0644'
+  when: not pve_keyring.stat.exists
+
+- name: Check for enterprise repository files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ pve_enterprise_repo_files }}"
+  register: pve_enterprise_repos
+
+- name: Disable enterprise deb822 repository
+  ansible.builtin.lineinfile:
+    path: "{{ item.item }}"
+    regexp: '^\s*Enabled:'
+    line: 'Enabled: no'
+  loop: "{{ pve_enterprise_repos.results }}"
+  when:
+    - pve_disable_enterprise_repo | bool
+    - item.stat.exists
+    - item.item | endswith('.sources')
+
+- name: Disable enterprise legacy repository
+  ansible.builtin.replace:
+    path: "{{ item.item }}"
+    regexp: '^\s*(deb\s+https://enterprise\.proxmox\.com)'
+    replace: '# \1'
+  loop: "{{ pve_enterprise_repos.results }}"
+  when:
+    - pve_disable_enterprise_repo | bool
+    - item.stat.exists
+    - item.item | endswith('.list')
+
+- name: Configure Proxmox VE no-subscription repository
+  ansible.builtin.deb822_repository:
+    name: "{{ pve_repo_name }}"
+    types: deb
+    uris: "{{ pve_repo_uri }}"
+    suites: "{{ pve_suite }}"
+    components: "{{ pve_repo_component }}"
+    signed_by: "{{ pve_keyring_path }}"
+    state: present
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Preseed postfix mailer type
+  ansible.builtin.debconf:
+    name: postfix
+    question: postfix/main_mailer_type
+    value: 'No configuration'
+    vtype: select
+
+- name: Preseed postfix mailname
+  ansible.builtin.debconf:
+    name: postfix
+    question: postfix/mailname
+    value: "{{ pve_mailname }}"
+    vtype: string
+
+- name: Install Proxmox VE packages
+  ansible.builtin.apt:
+    name: "{{ pve_packages }}"
+    state: present
+
+- name: Enable and start Proxmox VE services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: "{{ pve_services }}"
+
+- name: Configure nested virtualization kernel options
+  ansible.builtin.copy:
+    dest: "{{ pve_kvm_modprobe_file }}"
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Managed by Ansible (proxmox role) - requires a reboot to take effect
+      options kvm_intel nested=1
+      options kvm_amd nested=1
+  register: pve_kvm_modprobe
+  when: pve_nested_virtualization | bool
+
+- name: Remove nested virtualization kernel options
+  ansible.builtin.file:
+    path: "{{ pve_kvm_modprobe_file }}"
+    state: absent
+  when: not (pve_nested_virtualization | bool)
+
+- name: Remind about reboot after nested virtualization change
+  ansible.builtin.debug:
+    msg: "Nested virtualization settings changed - reboot the host to apply them."
+  when:
+    - pve_kvm_modprobe is defined
+    - pve_kvm_modprobe is changed
+
+- name: Ensure bridge stanza in /etc/network/interfaces
+  ansible.builtin.blockinfile:
+    path: /etc/network/interfaces
+    block: |
+      auto {{ pve_bridge_name }}
+      iface {{ pve_bridge_name }} inet manual
+          bridge_ports {{ pve_bridge_physical_interface }}
+          bridge_stp off
+          bridge_fd 0
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - proxmox bridge {{ pve_bridge_name }}"
+    create: true
+  register: pve_bridge_stanza
+  when: pve_configure_bridge | bool
+
+- name: Bring up Proxmox bridge
+  ansible.builtin.command: "ifup -f {{ pve_bridge_name }}"
+  when:
+    - pve_configure_bridge | bool
+    - pve_bridge_stanza is defined
+    - pve_bridge_stanza is changed
+  changed_when: true
+
+- name: Read Proxmox VE version
+  ansible.builtin.command: pveversion
+  register: pve_version
+  changed_when: false
+  failed_when: false
+
+- name: Display Proxmox VE configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Proxmox VE Configuration Summary ==="
+      - "{{ pve_version.stdout if pve_version.stdout | length > 0 else 'pveversion unavailable' }}"
+      - "Repository: {{ pve_repo_uri }} {{ pve_suite }} {{ pve_repo_component }}"
+      - "Nested virtualization: {{ 'enabled' if pve_nested_virtualization | bool else 'disabled' }}"
+      - >-
+        Bridge: {{ pve_bridge_name }} on {{ pve_bridge_physical_interface }}
+        ({{ 'managed' if pve_configure_bridge | bool else 'not managed by this role' }})
