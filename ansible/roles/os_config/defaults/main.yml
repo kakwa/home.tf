@@ -12,3 +12,4 @@ os_config_apt_recommends_conf: "{{ os_config_apt_conf_dir }}/99no-recommends"
 # on Debian; the `man` package name does not exist there).
 os_config_packages:
   - man-db
+  - bash-completion
