@@ -19,9 +19,16 @@ all:
           # Publish the static address immediately, before facts are refreshed
           # after a network change.
           avahi_lan_ip: 192.168.1.30
-          # The static_ip role manages the bridge; do not let proxmox write a
-          # second stanza into /etc/network/interfaces.
+          # The static_ip / PVE installer manage vmbr0 (nic0); do not let the
+          # proxmox role write a second stanza into /etc/network/interfaces.
           pve_configure_bridge: false
+          # nic1/nic2 are dedicated, IP-less bridges for VM traffic to the
+          # outside (the hypervisor itself has no address on them).
+          pve_additional_bridges:
+            - name: vmbr1
+              ports: nic1
+            - name: vmbr2
+              ports: nic2
           # TODO: fill in the NIC name once known. On PVE this is usually the
           # bridge (vmbr0) rather than the physical port:
           #   static_ip_nics:

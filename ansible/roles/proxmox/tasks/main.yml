@@ -65,15 +65,18 @@
   register: pve_enterprise_repos
 
 - name: Disable enterprise deb822 repository
-  ansible.builtin.lineinfile:
+  # Comment out every active field rather than only setting "Enabled: no":
+  # apt rejects a stanza that has Enabled but no Types/URIs/etc. (e.g. when
+  # the other fields were already commented out by the PVE installer).
+  ansible.builtin.replace:
     path: "{{ item.item }}"
-    regexp: '^\s*Enabled:'
-    line: 'Enabled: no'
+    regexp: '^\s*([A-Za-z][A-Za-z0-9-]*):'
+    replace: '# \1:'
   loop: "{{ pve_enterprise_repos.results }}"
   when:
     - pve_disable_enterprise_repo | bool
     - item.stat.exists
-    - item.item | endswith('.sources')
+    - item.item.endswith('.sources')
 
 - name: Disable enterprise legacy repository
   ansible.builtin.replace:
@@ -84,7 +87,7 @@
   when:
     - pve_disable_enterprise_repo | bool
     - item.stat.exists
-    - item.item | endswith('.list')
+    - item.item.endswith('.list')
 
 - name: Configure Proxmox VE no-subscription repository
   ansible.builtin.deb822_repository:
@@ -177,6 +180,30 @@
     - pve_bridge_stanza is changed
   changed_when: true
 
+- name: Ensure additional VM bridge stanzas in /etc/network/interfaces
+  ansible.builtin.blockinfile:
+    path: /etc/network/interfaces
+    block: |
+      auto {{ item.name }}
+      iface {{ item.name }} inet manual
+          bridge_ports {{ item.ports }}
+          bridge_stp off
+          bridge_fd 0
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - proxmox bridge {{ item.name }}"
+    create: true
+  loop: "{{ pve_additional_bridges }}"
+  register: pve_additional_bridges_result
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Bring up additional VM bridges
+  ansible.builtin.command: "ifup -f {{ item.item.name }}"
+  loop: "{{ pve_additional_bridges_result.results }}"
+  when: item.changed
+  changed_when: true
+  loop_control:
+    label: "{{ item.item.name }}"
+
 - name: Read Proxmox VE version
   ansible.builtin.command: pveversion
   register: pve_version
@@ -193,3 +220,6 @@
       - >-
         Bridge: {{ pve_bridge_name }} on {{ pve_bridge_physical_interface }}
         ({{ 'managed' if pve_configure_bridge | bool else 'not managed by this role' }})
+      - >-
+        Additional VM bridges:
+        {{ pve_additional_bridges | map(attribute='name') | join(', ') if pve_additional_bridges | length > 0 else 'none' }}

@@ -35,8 +35,9 @@ pve_packages:
   - proxmox-ve
   - postfix
   - pve-firmware
-  - chrony
-pve_mailname: "{{ ansible_fqdn | default(inventory_hostname) }}"
+# chrony is intentionally not listed: the misc-base role installs
+# systemd-timesyncd, and the two NTP daemons conflict with each other.
+pve_mailname: "{{ ansible_facts['fqdn'] | default(inventory_hostname) }}"
 
 pve_services:
   - pve-cluster
@@ -54,3 +55,10 @@ pve_kvm_modprobe_file: /etc/modprobe.d/qemu-system-x86.conf
 pve_configure_bridge: false
 pve_bridge_name: vmbr0
 pve_bridge_physical_interface: enp9s0
+
+# Additional IP-less bridges used purely as VM NICs (the host itself gets no
+# address on them). Each entry needs a bridge name and its physical port(s).
+pve_additional_bridges: []
+# pve_additional_bridges:
+#   - name: vmbr1
+#     ports: nic1

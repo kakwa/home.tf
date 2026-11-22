@@ -10,22 +10,29 @@
   vars:
     avahi_hostname: "kvm"
     avahi_additional_hostnames: []
+  pre_tasks:
+    # The PVE installer can leave an enterprise .sources file with all fields
+    # commented out except Enabled, which apt considers a malformed stanza.
+    # Neutralize it before any role runs apt.
+    - name: Check for PVE enterprise deb822 source
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.d/pve-enterprise.sources
+      register: pve_enterprise_precheck
+
+    - name: Disable PVE enterprise source before apt runs
+      ansible.builtin.replace:
+        path: /etc/apt/sources.list.d/pve-enterprise.sources
+        regexp: '^\s*([A-Za-z][A-Za-z0-9-]*):'
+        replace: '# \1:'
+      when:
+        - pve_enterprise_precheck.stat.exists
+        - pve_disable_enterprise_repo | default(true) | bool
   roles:
     - { role: os_config, tags: ["system", "os_config"] }
-    - { role: static_ip, tags: ["system", "network", "static_ip"] }
-    - { role: repos, tags: ["system", "repos"] }
+    - { role: users, tags: ["system", "os_config"] }
     - { role: misc-base, tags: ["system", "misc-base"] }
     - { role: root_ssh, tags: ["system", "ssh"] }
-    - { role: talos-tools, tags: ["system", "talos-tools"] }
-    - { role: serial-console, tags: ["system", "serial-console"] }
     - { role: avahi, tags: ["system", "network", "avahi"] }
     - { role: vim, tags: ["system", "vim"] }
     - { role: zsh, tags: ["system", "zsh"] }
-    # LVM role - set lvm_enable: true when ready to set up storage
-    # WARNING: This will wipe data on configured devices!
-    #- { role: lvm, vars: { lvm_enable: true, lvm_force_recreate: true }, tags: ["hypervisor", "storage", "lvm"] }
     - { role: proxmox, tags: ["hypervisor", "virtualization", "proxmox"] }
-    - role: terraform-sync
-      vars:
-        terraform_sync_src: "{{ playbook_dir }}/../terraform"
-      tags: ["hypervisor", "terraform-sync"]
