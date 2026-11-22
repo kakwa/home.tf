@@ -30,7 +30,12 @@ all:
           #       gateway: 192.168.1.254
           #       dns: [192.168.1.25]
           #       bridge_ports: [enp9s0]   # replace with the real NIC
-          static_ip_nics: {}
+          static_ip_nics:
+            enp3s0:
+              address: 192.168.1.30/24
+              gateway: 192.168.1.254
+              dns:
+                - 192.168.1.254
     ai_servers:
       hosts:
         ai:

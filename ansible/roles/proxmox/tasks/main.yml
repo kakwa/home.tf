@@ -22,6 +22,29 @@
     - pve_suite not in pve_supported_suites
     - pve_allow_unsupported_suite | bool
 
+# Proxmox packages carry exact-version dependencies on their base release's
+# libraries (e.g. perlapi-5.40.1 on trixie), so they cannot be installed on a
+# different Debian release. Fail early with a clear message instead of an
+# opaque apt dependency error.
+- name: Read host distribution codename
+  ansible.builtin.command:
+    cmd: sh -c '. /etc/os-release && printf "%s\n" "$VERSION_CODENAME"'
+  register: pve_host_codename_raw
+  changed_when: false
+
+- name: Validate host distribution codename matches Proxmox suite
+  ansible.builtin.assert:
+    that:
+      - pve_host_codename_raw.stdout | trim == pve_suite
+      - pve_host_codename_raw.stdout | trim in pve_supported_suites or pve_allow_unsupported_suite | bool
+    fail_msg: >-
+      This host runs Debian '{{ pve_host_codename_raw.stdout | trim }}' but the
+      Proxmox repository is configured for '{{ pve_suite }}'. Proxmox packages
+      pin exact versions of their base release's libraries and cannot be
+      installed on a different Debian release. Reinstall the host with Debian
+      '{{ pve_suite }}' (or the matching Proxmox VE ISO) and re-run.
+  when: pve_host_codename_raw.stdout | trim != pve_suite
+
 - name: Check for Proxmox archive keyring
   ansible.builtin.stat:
     path: "{{ pve_keyring_path }}"
@@ -74,9 +97,11 @@
     state: present
 
 - name: Update apt cache
+  # No cache_valid_time: an earlier role in the same run may have refreshed
+  # the cache moments ago, which would make the update skip and leave the
+  # newly added repository unfetched.
   ansible.builtin.apt:
     update_cache: true
-    cache_valid_time: 3600
 
 - name: Preseed postfix mailer type
   ansible.builtin.debconf:
