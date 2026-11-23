@@ -30,10 +30,12 @@ pve_pools: []
 #     role: PVEVMAdmin
 
 # ACL role granted on each pool to its user (and, since PVE 9, to its token as
-# well - see pve_pools_aux_grants for why). Built-in roles that make sense for
-# a per-project account: PVEVMAdmin (manage VMs), PVEVMUser (run/stop),
-# PVEAuditor (read-only). See https://pve.proxmox.com/wiki/Access_Control
-pve_pools_default_role: PVEVMAdmin
+# well - see pve_pools_aux_grants for why). PVEPoolAdmin carries the Pool.*
+# privileges, which lets the project account read and modify its own pool via
+# API and UI (PVEVMAdmin on the pool path lacks Pool.Audit, so the pool is
+# invisible to the account). VM operations are covered by the /vms aux grant
+# (PVEVMAdmin). See https://pve.proxmox.com/wiki/Access_Control
+pve_pools_default_role: PVEPoolAdmin
 
 # PVE node id, used for node-scoped grants (e.g. Sys.AccessNetwork for
 # downloading OS images by URL).

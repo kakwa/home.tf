@@ -18,8 +18,8 @@ For every entry in `pve_pools`:
 2. Creates the API token `user@realm!token` (default token name `token`) if
    it does not exist.
 3. Creates the pool `name` if it does not exist.
-4. Grants the configured role (default `PVEVMAdmin`) on the pool to the
-   user, if the grant is missing.
+4. Grants the configured role (default `PVEPoolAdmin`) on the pool to both
+   the user and its token, if the grant is missing.
 5. Audits pool usage against the entry's `quota` (see [Quotas](#quotas)).
 6. Installs a pre-start hook that blocks VM start/migrate when it would push
    a pool over its CPU/RAM quota (skipped with a warning where `/etc/pve`
@@ -144,7 +144,7 @@ pve_pools:
 | --- | --- | --- |
 | `pve_pools` | `[]` | One entry per project: `name` (pool id), `user`, `token` (default `token`), `role` (default `pve_pools_default_role`), optional `email`, optional `quota` (`max_vms`, `max_cpu`, `max_ram_gb`, `max_disk_gb`) |
 | `pve_pools_realm` | `pve` | Realm of the created users |
-| `pve_pools_default_role` | `PVEVMAdmin` | Role granted on each pool |
+| `pve_pools_default_role` | `PVEPoolAdmin` | Role granted on each pool (carries the `Pool.*` privileges, so the account can read and modify its own pool via API and UI) |
 | `pve_pools_quota_enforce` | `false` | Fail the play when a quota is exceeded (otherwise report only) |
 | `pve_pools_quota_dir` | `/usr/local/sbin` | Directory for the usage helper |
 | `pve_pools_quota_usage_script` | `/usr/local/sbin/pve-pool-usage` | Path of the usage helper script |
@@ -156,15 +156,26 @@ pve_pools:
 
 `name`, `user` and `token` must match `^[a-zA-Z0-9_-]+$` (PVE id rules).
 
-Useful built-in roles for a per-project account: `PVEVMAdmin` (create/manage
-VMs in the pool), `PVEVMUser` (start/stop/configure existing VMs),
-`PVEAuditor` (read-only). See the
+Useful built-in roles for a per-project account: `PVEPoolAdmin` (the
+default; the `Pool.*` privileges — read and modify the pool itself),
+`PVEVMAdmin` (create/manage VMs), `PVEVMUser` (start/stop/configure
+existing VMs), `PVEAuditor` (read-only). See the
 [Access Control wiki](https://pve.proxmox.com/wiki/Access_Control).
 
+Two PVE quirks the defaults account for:
+
+* The pool role governs the **pool path only**; PVE does not propagate pool
+  grants to VM paths, so managing VMs additionally needs a `/vms` grant
+  (included in `pve_pools_aux_grants`, granted to user and token).
+* PVE 9 tokens default to `privsep:1`: a privsep token's effective
+  permissions are the *intersection* of its own grants and its owning
+  user's grants, so every grant must land on both.
+
 Note: changing an entry's `role` adds the new grant; the old one is not
-removed (other grants on the same path are preserved). Delete stale grants
-manually: `pvesh set /access/acl --path /pool/<name> --users <uid>
---roles <old> --delete 1`.
+removed (other grants on the same path are preserved). PVE 9 has no ACL
+delete endpoint, so stale grants are removed by editing the `acl` section
+of `/etc/pve/user.cfg` (back up the file first; PVE picks up the change on
+the next API request).
 
 ## Usage
 

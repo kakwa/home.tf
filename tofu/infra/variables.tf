@@ -145,3 +145,20 @@ variable "ldap_vm" {
     dns   = ["192.168.1.25"]
   }
 }
+
+# Ansible master VM
+variable "ansible_master_vm" {
+  description = "Ansible master VM identity (name is also used as the guest hostname)"
+  type = object({
+    name  = string
+    vm_id = number
+    ip    = string
+    dns   = list(string)
+  })
+  default = {
+    name  = "ansible-master"
+    vm_id = 102
+    ip    = "192.168.1.35"
+    dns   = ["192.168.1.25"]
+  }
+}

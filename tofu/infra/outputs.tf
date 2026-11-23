@@ -15,3 +15,17 @@ output "ldap_vm" {
     ip   = var.ldap_vm.ip
   }
 }
+
+output "ansible_master_vm" {
+  description = "Ansible master VM identity"
+  value = {
+    name = var.ansible_master_vm.name
+    id   = var.ansible_master_vm.vm_id
+    ip   = var.ansible_master_vm.ip
+  }
+}
+
+output "inventory_file" {
+  description = "Path of the generated Ansible inventory"
+  value       = "${path.module}/inventory.yml"
+}

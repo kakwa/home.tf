@@ -1,5 +1,5 @@
 # Debian cloud image, downloaded on the PVE node to `local` (dir storage).
-# Both VMs import their boot disk from this file into `local-lvm`.
+# All VMs import their boot disk from this file into `local-lvm`.
 resource "proxmox_virtual_environment_download_file" "debian" {
   node_name    = var.pve_node
   datastore_id = var.image_datastore
@@ -109,6 +109,61 @@ resource "proxmox_virtual_environment_vm" "ldap" {
     ip_config {
       ipv4 {
         address = "${var.ldap_vm.ip}/${var.vm_subnet_mask}"
+        gateway = var.vm_gateway
+      }
+    }
+
+    user_account {
+      username = var.vm_admin_user
+      keys     = var.vm_authorized_keys
+    }
+  }
+}
+
+# Ansible master VM
+resource "proxmox_virtual_environment_vm" "ansible_master" {
+  name      = var.ansible_master_vm.name
+  node_name = var.pve_node
+  vm_id     = var.ansible_master_vm.vm_id
+  pool_id   = var.pve_pool
+  machine   = "q35"
+  tags      = var.vm_tags
+  started   = true
+  on_boot   = true
+
+  cpu {
+    type  = "host"
+    cores = var.vm_cores
+  }
+
+  memory {
+    dedicated = var.vm_ram_mb
+  }
+
+  disk {
+    datastore_id = var.vm_datastore
+    interface    = "scsi0"
+    size         = var.vm_disk_size_gb
+    import_from  = proxmox_virtual_environment_download_file.debian.id
+  }
+
+  network_device {
+    bridge = var.vm_bridge
+  }
+
+  serial_device {
+    device = "socket"
+  }
+
+  initialization {
+    dns {
+      # Point at the DNS VM.
+      servers = var.ansible_master_vm.dns
+    }
+
+    ip_config {
+      ipv4 {
+        address = "${var.ansible_master_vm.ip}/${var.vm_subnet_mask}"
         gateway = var.vm_gateway
       }
     }
