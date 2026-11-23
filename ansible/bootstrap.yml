@@ -10,8 +10,8 @@
 # First-time login with a password (requires sshpass locally):
 #   ansible-playbook -k -K --limit ai bootstrap.yml
 #
-# Ad-hoc host, reusing a host's NIC -> IP mapping from inventory.yml:
-#   ansible-playbook -i inventory.yml -i "$HOST," --limit "$HOST" \
+# Ad-hoc host, reusing a host's NIC -> IP mapping from the inventory:
+#   ansible-playbook -i "$HOST," --limit "$HOST" \
 #     -e ansible_user="$LOGIN" -e bootstrap_inventory_host=ai bootstrap.yml
 #
 # Override elevation detection (e.g. sudo with a password):
@@ -130,7 +130,7 @@
           - hostvars[bootstrap_inventory_host].static_ip_nics is defined
         fail_msg: >-
           No host '{{ bootstrap_inventory_host }}' with static_ip_nics in the
-          inventory. Add inventory.yml as a second -i source.
+          inventory. Add the inventory directory as a second -i source.
       when: bootstrap_inventory_host | default('') | length > 0
 
     - name: Reuse the named host's NIC -> IP mapping

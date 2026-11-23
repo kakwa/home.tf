@@ -1,7 +1,7 @@
 ---
 # Utility VM: base roles + Certbot (OVH DNS-01) + OpenLDAP + ldapcherry + docker registry
 # Targets the `utility` group of the Terraform-generated inventory
-# (../terraform/inventory.yml); a no-op against the local inventory.yml.
+# (../terraform/inventory.yml); a no-op against the local inventory/ directory.
 - name: Utility VM Setup
   hosts: utility
   become: true

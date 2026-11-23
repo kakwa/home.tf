@@ -27,5 +27,5 @@ output "ansible_master_vm" {
 
 output "inventory_file" {
   description = "Path of the generated Ansible inventory"
-  value       = "${path.module}/inventory.yml"
+  value       = "${path.module}/../../ansible/inventory/infra.yml"
 }

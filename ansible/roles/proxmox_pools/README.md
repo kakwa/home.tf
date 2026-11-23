@@ -122,7 +122,7 @@ To deny a start attempt, the hook prints
 `pre-start: VM <id> would push pool '<pool>' CPU to N vCPU (quota M)` to
 stderr, which PVE surfaces in the start error.
 
-Example with quotas (see `inventory.yml`):
+Example with quotas (see `inventory/hypervisor.yml`):
 
 ```yaml
 pve_pools:
@@ -187,7 +187,7 @@ the next API request).
 ```
 
 `pve_pools` is configured per host in the inventory. Example (from
-`inventory.yml`):
+`inventory/hypervisor.yml`):
 
 ```yaml
 kvm:

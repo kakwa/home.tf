@@ -22,7 +22,7 @@ all:
             - 192.168.1.25
 ```
 
-See `ansible/inventory.yml` for the live mapping (AI server: `enp9s0` →
+See `ansible/inventory/` for the live mapping (AI server: `enp9s0` →
 `192.168.1.20`; hypervisor: `192.168.1.30` with the NIC still to be filled in).
 A host with `static_ip_nics: {}` (or no variable at all) is skipped entirely.
 

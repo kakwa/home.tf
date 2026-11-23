@@ -88,7 +88,7 @@ Custom configuration:
         ai_power_poll_interval: 60
 ```
 
-`ai.local` is a physical host with a static entry in the default `inventory.yml`, so run it with:
+`ai.local` is a physical host with a static entry in the default inventory (`ansible/inventory/`), so run it with:
 
 ```bash
 ansible-playbook --limit ai ai.yml

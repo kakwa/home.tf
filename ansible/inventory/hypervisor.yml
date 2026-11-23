@@ -1,13 +1,13 @@
 ---
-# Static inventory for the physical homelab hosts.
+# Inventory: hypervisor pool (the kvm host).
+#
+# The inventory is the `inventory/` directory: Ansible merges every *.yml
+# file in it (see ansible.cfg). `infra.yml` in this directory is generated
+# by OpenTofu (tofu/infra) and is overwritten on every `tofu apply`.
 #
 # The NIC -> IP mapping is per host under `static_ip_nics`; it is consumed by
 # the `static_ip` role (see roles/static_ip/README.md). Each NIC carries its
 # own address, gateway and DNS - there are no global network defaults.
-#
-# The utility VM is intentionally absent: it is provisioned by Terraform and
-# gets its network config from cloud-init/netplan. Use
-# `ansible-playbook -i ../terraform/inventory.yml utility.yml` for that host.
 all:
   vars:
     ansible_user: kakwa
@@ -64,17 +64,6 @@ all:
           static_ip_nics:
             enp3s0:
               address: 192.168.1.30/24
-              gateway: 192.168.1.254
-              dns:
-                - 192.168.1.254
-    ai_servers:
-      hosts:
-        ai:
-          ansible_host: 192.168.1.20
-          avahi_lan_ip: 192.168.1.20
-          static_ip_nics:
-            enp9s0:
-              address: 192.168.1.20/24
               gateway: 192.168.1.254
               dns:
                 - 192.168.1.254
