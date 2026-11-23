@@ -36,3 +36,4 @@
     - { role: vim, tags: ["system", "vim"] }
     - { role: zsh, tags: ["system", "zsh"] }
     - { role: proxmox, tags: ["hypervisor", "virtualization", "proxmox"] }
+    - { role: proxmox_pools, tags: ["hypervisor", "virtualization", "proxmox", "proxmox-pools"] }

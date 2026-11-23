@@ -1,0 +1,478 @@
+---
+# Proxmox pools, users and API tokens ("projects").
+#
+# Each entry in pve_pools is one project: a PVE pool, a user (account) and an
+# API token, with the user granted a role on its own pool via an ACL entry.
+#
+# Management is done with pvesh (the PVE admin CLI, local root access) so no
+# pre-existing API token is needed. Everything is idempotent:
+#
+#   * users:     created if missing; password (re)generated if its file is lost
+#   * tokens:    created if missing; if the token exists but its file is lost
+#                the secret cannot be recovered, so a warning is printed
+#   * pools:     created if missing
+#   * ACL:       set if the granted role differs from the configured one
+#
+# Secrets follow the repo convention: lookup('password', <file>) generates a
+# value on first use and persists it in the file on the controller, so it is
+# stable across runs. Files are created 0600 by the lookup itself, in
+# pve_pools_secrets_dir (controller), then copied to pve_pools_dir (host):
+#   <user>.password   plain password for user@realm (GUI/login)
+#   <user>.token      API token secret for user@realm!<token>
+#
+# All check tasks loop over pve_pools; mutation tasks find the matching check
+# result by name via selectattr('item.<key>', 'equalto', item.<key>) | first.
+# (No loop-index variable is exposed by the Jinja2 environment in use.)
+
+- name: Validate pool entries
+  ansible.builtin.assert:
+    that:
+      - item.name | length > 0
+      - item.user | length > 0
+      - item.role | default(pve_pools_default_role) | length > 0
+      - item.token | default('token') | length > 0
+      - item.name is match('^[a-zA-Z0-9_-]+$')
+      - item.user is match('^[a-zA-Z0-9_-]+$')
+      - item.token | default('token') is match('^[a-zA-Z0-9_-]+$')
+    fail_msg: >-
+      Invalid pool entry {{ item | to_nice_json }}: name, user and role are
+      required; name/user/token must match ^[a-zA-Z0-9_-]+$; token defaults
+      to 'token', role to {{ pve_pools_default_role }}.
+  loop: "{{ pve_pools }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Create directory for generated PVE credentials on the controller
+  ansible.builtin.file:
+    path: "{{ pve_pools_secrets_dir }}"
+    state: directory
+    mode: '0700'
+  become: false
+  delegate_to: localhost
+
+- name: Create directory for generated PVE credentials on the PVE host
+  ansible.builtin.file:
+    path: "{{ pve_pools_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Check for existing PVE users
+  ansible.builtin.command: "pvesh get /access/users/{{ item.user }}@{{ pve_pools_realm }}"
+  register: pve_users_check
+  changed_when: false
+  failed_when: false
+  loop: "{{ pve_pools }}"
+  loop_control:
+    label: "{{ item.user }}"
+
+- name: Check for existing PVE tokens
+  # One single path argument: a line break in a folded scalar would split the
+  # path into two argv elements.
+  ansible.builtin.command: "pvesh get /access/users/{{ item.user }}@{{ pve_pools_realm }}/tokens/{{ item.user }}@{{ pve_pools_realm }}!{{ item.token | default('token') }}"
+  register: pve_tokens_check
+  changed_when: false
+  failed_when: false
+  loop: "{{ pve_pools }}"
+  loop_control:
+    label: "{{ item.user }}"
+
+- name: Check for existing PVE pools
+  ansible.builtin.command: "pvesh get /access/pools/{{ item.name }}"
+  register: pve_pools_check
+  changed_when: false
+  failed_when: false
+  loop: "{{ pve_pools }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Check for current ACL role per pool
+  ansible.builtin.command: >-
+    pvesh get /access/acl
+    --userid {{ item.user }}@{{ pve_pools_realm }}
+    --path /pools/{{ item.name }}
+  register: pve_acl_check
+  changed_when: false
+  failed_when: false
+  loop: "{{ pve_pools }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Stat generated password files on the controller
+  ansible.builtin.stat:
+    path: "{{ pve_pools_secrets_dir }}/{{ item.user }}.password"
+  register: pve_password_files
+  become: false
+  delegate_to: localhost
+  loop: "{{ pve_pools }}"
+  loop_control:
+    label: "{{ item.user }}"
+
+# Users ------------------------------------------------------------------
+
+- name: Create PVE users
+  ansible.builtin.command: >-
+    pvesh create /access/users
+    --username {{ item.user }}@{{ pve_pools_realm }}
+    --password "{{ lookup('password', pve_pools_secrets_dir ~ '/' ~ item.user ~ '.password length=24 chars=ascii_letters,digits') }}"
+    --comment "Managed by Ansible (proxmox_pools role)"
+    {% if item.email is defined %}
+    --email {{ item.email }}
+    {% endif %}
+  register: pve_users_created
+  changed_when: true
+  loop: "{{ pve_pools }}"
+  when: >-
+    (pve_users_check.results
+     | selectattr('item.user', 'equalto', item.user) | first).stdout
+    is not search('userid')
+  loop_control:
+    label: "{{ item.user }}"
+
+- name: Reset password for existing PVE users with a lost password file
+  # lookup('password') regenerates and persists the file when it is missing,
+  # so this both recovers the file and resynchronizes it with the account.
+  ansible.builtin.command: >-
+    pvesh set /access/users/{{ item.user }}@{{ pve_pools_realm }}
+    --password "{{ lookup('password', pve_pools_secrets_dir ~ '/' ~ item.user ~ '.password length=24 chars=ascii_letters,digits') }}"
+  register: pve_users_reset
+  changed_when: true
+  loop: "{{ pve_pools }}"
+  when:
+    - >-
+      (pve_users_check.results
+       | selectattr('item.user', 'equalto', item.user) | first).stdout
+      is search('userid')
+    - >-
+      not (pve_password_files.results
+           | selectattr('item.user', 'equalto', item.user) | first).stat.exists
+  loop_control:
+    label: "{{ item.user }}"
+
+# API tokens -------------------------------------------------------------
+
+- name: Create API tokens
+  ansible.builtin.command: >-
+    pvesh create /access/users/{{ item.user }}@{{ pve_pools_realm }}/tokens
+    --tokenid {{ item.token | default('token') }}
+    --password "{{ lookup('password', pve_pools_secrets_dir ~ '/' ~ item.user ~ '.token length=48 chars=ascii_letters,digits') }}"
+  register: pve_tokens_created
+  changed_when: true
+  loop: "{{ pve_pools }}"
+  when: >-
+    (pve_tokens_check.results
+     | selectattr('item.user', 'equalto', item.user) | first).stdout
+    is not search('tokenid')
+  loop_control:
+    label: "{{ item.user }}"
+
+# Stat after the create tasks: lookup('password') generates the token files
+# during this run, so a pre-run stat would never see them.
+
+- name: Stat generated token files on the controller
+  ansible.builtin.stat:
+    path: "{{ pve_pools_secrets_dir }}/{{ item.user }}.token"
+  register: pve_token_files
+  become: false
+  delegate_to: localhost
+  loop: "{{ pve_pools }}"
+  loop_control:
+    label: "{{ item.user }}"
+
+- name: Warn when a token exists but its secret file is missing
+  ansible.builtin.debug:
+    msg: >-
+      Token {{ item.user }}@{{ pve_pools_realm }}!{{ item.token | default('token') }}
+      exists on the host but {{ pve_pools_secrets_dir }}/{{ item.user }}.token is
+      missing. PVE only stores the token hash, so the secret cannot be recovered.
+      Delete the token (pvesh delete
+      /access/users/{{ item.user }}@{{ pve_pools_realm }}/tokens/{{ item.user }}@{{ pve_pools_realm }}!{{ item.token | default('token') }})
+      and re-run to have it recreated with a new secret.
+  loop: "{{ pve_pools }}"
+  when:
+    - >-
+      (pve_tokens_check.results
+       | selectattr('item.user', 'equalto', item.user) | first).stdout
+      is search('tokenid')
+    - >-
+      not (pve_token_files.results
+           | selectattr('item.user', 'equalto', item.user) | first).stat.exists
+  loop_control:
+    label: "{{ item.user }}"
+
+# Host copies of the generated secrets ------------------------------------
+
+- name: Copy user passwords to the PVE host
+  ansible.builtin.copy:
+    src: "{{ pve_pools_secrets_dir }}/{{ item.user }}.password"
+    dest: "{{ pve_pools_dir }}/{{ item.user }}.password"
+    owner: root
+    group: root
+    mode: '0600'
+  loop: "{{ pve_pools }}"
+  loop_control:
+    label: "{{ item.user }}"
+
+- name: Copy token secrets to the PVE host
+  ansible.builtin.copy:
+    src: "{{ pve_pools_secrets_dir }}/{{ item.user }}.token"
+    dest: "{{ pve_pools_dir }}/{{ item.user }}.token"
+    owner: root
+    group: root
+    mode: '0600'
+  loop: "{{ pve_pools }}"
+  when:
+    - >-
+      (pve_token_files.results
+       | selectattr('item.user', 'equalto', item.user) | first).stat.exists
+  loop_control:
+    label: "{{ item.user }}"
+
+# Pools ------------------------------------------------------------------
+
+- name: Create PVE pools
+  ansible.builtin.command: "pvesh create /access/pools/{{ item.name }}"
+  register: pve_pools_created
+  changed_when: true
+  loop: "{{ pve_pools }}"
+  when: >-
+    (pve_pools_check.results
+     | selectattr('item.name', 'equalto', item.name) | first).stdout
+    is not search('poolid')
+  loop_control:
+    label: "{{ item.name }}"
+
+# ACL --------------------------------------------------------------------
+
+- name: Ensure ACL grant on each pool
+  ansible.builtin.command: >-
+    pvesh set /access/acl
+    --userid {{ item.user }}@{{ pve_pools_realm }}
+    --path /pools/{{ item.name }}
+    --role {{ item.role | default(pve_pools_default_role) }}
+  register: pve_acl_grants
+  changed_when: true
+  loop: "{{ pve_pools }}"
+  when: >-
+    (pve_acl_check.results
+     | selectattr('item.name', 'equalto', item.name) | first).stdout
+    is not search(
+      '"role"\\s*:\\s*"{}"'.format(item.role | default(pve_pools_default_role))
+    )
+  loop_control:
+    label: "{{ item.name }}"
+
+# Quotas ------------------------------------------------------------------
+# PVE pools have no native resource quotas, so this section audits them:
+# a helper script sums the allocated resources of every VM in each pool and
+# the role compares the totals against the per-entry quota: max_vms, max_cpu
+# (vCPUs), max_ram_gb, max_disk_gb. An exceeded quota is reported; with
+# pve_pools_quota_enforce: true it fails the play.
+
+- name: Ensure quota helper directory
+  ansible.builtin.file:
+    path: "{{ pve_pools_quota_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install pool usage helper script
+  ansible.builtin.copy:
+    dest: "{{ pve_pools_quota_usage_script }}"
+    owner: root
+    group: root
+    mode: '0755'
+    content: |
+      #!/usr/bin/env python3
+      # Sum the allocated resources of the VMs in each given pool and print
+      # the result as JSON: {"<pool>": {"vms": N, "cpu": N, "ram_gb": F,
+      # "disk_gb": F}}. Read-only; uses pvesh.
+      import json, subprocess, sys
+
+      GB = 1024 ** 3
+
+      def pvesh(path):
+          out = subprocess.run(["pvesh", "get", path, "--output-format", "json"],
+                               capture_output=True, text=True, check=True)
+          return json.loads(out.stdout)
+
+      pools = sys.argv[1:]
+      try:
+          resources = pvesh("/cluster/resources")
+      except Exception as e:
+          sys.stderr.write("pool-usage: unable to list resources: %s\n" % e)
+          sys.exit(1)
+
+      usage = {p: {"vms": 0, "cpu": 0, "ram_gb": 0.0, "disk_gb": 0.0} for p in pools}
+      for r in resources:
+          if r.get("type") != "qm":
+              continue
+          for p in (r.get("pool") or "").split(","):
+              if p in usage:
+                  u = usage[p]
+                  u["vms"] += 1
+                  u["cpu"] += r.get("cores", 0) * r.get("sockets", 1)
+                  u["ram_gb"] += r.get("maxmemory", 0) / GB
+                  u["disk_gb"] += r.get("maxdisk", 0) / GB
+
+      json.dump(usage, sys.stdout)
+
+- name: Collect per-pool usage
+  ansible.builtin.command: >-
+    {{ pve_pools_quota_usage_script }}
+    {{ pve_pools | map(attribute='name') | join(' ') }}
+  register: pve_pool_usage_raw
+  changed_when: false
+  failed_when: false
+
+- name: Set pool usage fact
+  ansible.builtin.set_fact:
+    pve_pool_usage: >-
+      {{ pve_pool_usage_raw.stdout | default('') | from_json
+         if (pve_pool_usage_raw.stdout | default('')) else {} }}
+
+- name: Report pool quota usage
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.name }}: vms={{ pve_pool_usage[item.name].vms | default(0) }}
+      (max {{ item.quota.max_vms | default('n/a') }}),
+      cpu={{ pve_pool_usage[item.name].cpu | default(0) }}
+      (max {{ item.quota.max_cpu | default('n/a') }}),
+      ram={{ (pve_pool_usage[item.name].ram_gb | default(0)) | round(1) }}GB
+      (max {{ item.quota.max_ram_gb | default('n/a') }}),
+      disk={{ (pve_pool_usage[item.name].disk_gb | default(0)) | round(1) }}GB
+      (max {{ item.quota.max_disk_gb | default('n/a') }})
+  loop: "{{ pve_pools | selectattr('quota', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Check pool quota limits
+  ansible.builtin.assert:
+    that:
+      - item.quota.max_vms is not defined
+        or pve_pool_usage[item.name].vms | default(0) <= item.quota.max_vms
+      - item.quota.max_cpu is not defined
+        or pve_pool_usage[item.name].cpu | default(0) <= item.quota.max_cpu
+      - item.quota.max_ram_gb is not defined
+        or pve_pool_usage[item.name].ram_gb | default(0) <= item.quota.max_ram_gb
+      - item.quota.max_disk_gb is not defined
+        or pve_pool_usage[item.name].disk_gb | default(0) <= item.quota.max_disk_gb
+    fail_msg: >-
+      Pool {{ item.name }} exceeds its quota
+      (vms={{ pve_pool_usage[item.name].vms | default(0) }},
+      cpu={{ pve_pool_usage[item.name].cpu | default(0) }},
+      ram={{ (pve_pool_usage[item.name].ram_gb | default(0)) | round(1) }}GB,
+      disk={{ (pve_pool_usage[item.name].disk_gb | default(0)) | round(1) }}GB).
+      This is reported on every run; with pve_pools_quota_enforce: true the
+      play fails.
+    quiet: "{{ not pve_pools_quota_enforce }}"
+  loop: "{{ pve_pools | selectattr('quota', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# Pre-start hook (admission control) --------------------------------------
+
+- name: Render pool quota config for the pre-start hook
+  ansible.builtin.copy:
+    dest: "{{ pve_pools_quota_conf }}"
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Managed by Ansible (proxmox_pools role) - pool resource quotas
+      # consumed by {{ pve_pools_quota_hook_file }}. One line per pool that
+      # has a quota: <pool> <max_cpu> <max_ram_gb>
+      {% for item in pve_pools if item.quota is defined %}
+      {{ item.name }} {{ item.quota.max_cpu | default(0) }} {{ item.quota.max_ram_gb | default(0) }}
+      {% endfor %}
+
+- name: Install pre-start quota hook
+  ansible.builtin.copy:
+    dest: "{{ pve_pools_quota_hook_file }}"
+    owner: root
+    group: root
+    mode: '0755'
+    content: |
+      #!/bin/sh
+      # Proxmox pre-start hook: refuse to start/migrate a VM when doing so
+      # would push its pool over the CPU or RAM quota in
+      # {{ pve_pools_quota_conf }}. Exit 0 = allow, non-zero = deny.
+      set -u
+      CONF="{{ pve_pools_quota_conf }}"
+      VMID="${1:-}"
+      [ -n "$VMID" ] || exit 0
+      [ -f "$CONF" ] || exit 0
+
+      # VM's own allocation (cores, sockets, memory in KiB)
+      cfg="$(pvesh get "/nodes/$(hostname -s)/qemu/$VMID/config" 2>/dev/null)"
+      [ -n "$cfg" ] || exit 0
+      cores=$(printf '%s\n' "$cfg" | sed -n 's/.*"cores"[[:space:]]*:[[:space:]]*"\{0,1\}\([0-9][0-9]*\).*/\1/p' | head -n1)
+      sockets=$(printf '%s\n' "$cfg" | sed -n 's/.*"sockets"[[:space:]]*:[[:space:]]*"\{0,1\}\([0-9][0-9]*\).*/\1/p' | head -n1)
+      mem_kib=$(printf '%s\n' "$cfg" | sed -n 's/.*"memory"[[:space:]]*:[[:space:]]*"\{0,1\}\([0-9][0-9]*\).*/\1/p' | head -n1)
+      [ -n "$cores" ] && [ -n "$mem_kib" ] || exit 0
+      : "${sockets:=1}"
+      vcpus=$(( cores * sockets ))
+
+      # Pools this VM belongs to
+      pools="$(printf '%s\n' "$cfg" | sed -n 's/.*"pool"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+      [ -n "$pools" ] || exit 0
+
+      for pool in $pools; do
+        line=$(grep -E "^$pool[[:space:]]" "$CONF" | head -n1)
+        [ -n "$line" ] || continue
+        set -- $line
+        max_cpu=$2
+        max_ram_gb=$3
+        # Skip pools without a CPU or RAM limit
+        [ "$max_cpu" -gt 0 ] 2>/dev/null || [ "$max_ram_gb" -gt 0 ] 2>/dev/null || continue
+
+        # Current pool usage excluding this VM
+        usage=$(pvesh get /cluster/resources --output-format json 2>/dev/null |
+          python3 -c '
+      import json, sys
+      vmid, pool = sys.argv[1], sys.argv[2]
+      cpu = ram = 0
+      for r in json.load(sys.stdin):
+          if r.get("type") != "qm" or str(r.get("vmid")) == vmid:
+              continue
+          if pool in (r.get("pool") or "").split(","):
+              cpu += r.get("cores", 0) * r.get("sockets", 1)
+              ram += r.get("maxmemory", 0) // 1024  # bytes -> KiB
+      print("%d %d" % (cpu, ram))
+      ' "$VMID" "$pool") || exit 0
+        cur_cpu=${usage%% *}
+        cur_ram_kib=${usage##* }
+
+        new_cpu=$(( cur_cpu + vcpus ))
+        new_ram_gb=$(( (cur_ram_kib + mem_kib) / 1048576 ))
+        if [ "$max_cpu" -gt 0 ] && [ "$new_cpu" -gt "$max_cpu" ]; then
+          echo "pre-start: VM $VMID would push pool '$pool' CPU to $new_cpu vCPU (quota $max_cpu)" >&2
+          exit 1
+        fi
+        if [ "$max_ram_gb" -gt 0 ] && [ "$new_ram_gb" -gt "$max_ram_gb" ]; then
+          echo "pre-start: VM $VMID would push pool '$pool' RAM to ${new_ram_gb}GB (quota ${max_ram_gb}GB)" >&2
+          exit 1
+        fi
+      done
+      exit 0
+  when: pve_pools_quota_hook
+
+- name: Summarize PVE pool configuration
+  ansible.builtin.debug:
+    msg: "=== Proxmox pools summary ==="
+
+- name: Summarize each PVE pool
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.name }}: pool={{ 'created' if ((pve_pools_check.results | selectattr('item.name', 'equalto', item.name) | first).stdout is not search('poolid')) else 'existing' }},
+      user={{ item.user }}@{{ pve_pools_realm }}
+      ({{ 'created' if ((pve_users_check.results | selectattr('item.user', 'equalto', item.user) | first).stdout is not search('userid')) else 'existing' }}),
+      token={{ item.token | default('token') }}
+      ({{ 'created' if ((pve_tokens_check.results | selectattr('item.user', 'equalto', item.user) | first).stdout is not search('tokenid')) else 'existing' }}),
+      role={{ item.role | default(pve_pools_default_role) }}
+      (changed={{ (pve_acl_grants.results | selectattr('item.name', 'equalto', item.name) | first).changed | default(false) }})
+  loop: "{{ pve_pools }}"
+  loop_control:
+    label: "{{ item.name }}"

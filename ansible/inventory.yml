@@ -16,6 +16,15 @@ all:
       hosts:
         kvm:
           ansible_host: 192.168.1.30
+          # Proxmox "projects": one pool + user + API token each (proxmox_pools
+          # role). Credentials are generated on the controller in
+          # ansible/pve_pools/ (<user>.password, <user>.token, gitignored) and
+          # copied to /root/pve-credentials on the host.
+          pve_pools:
+            - name: pocs
+              user: pocs
+            - name: k8s
+              user: k8s
           # Publish the static address immediately, before facts are refreshed
           # after a network change.
           avahi_lan_ip: 192.168.1.30

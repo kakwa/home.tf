@@ -1,0 +1,65 @@
+---
+# Proxmox pools / users / API tokens ("projects").
+#
+# Each entry in pve_pools is one project: a PVE pool, a user (account) and an
+# API token, with the user granted pve_pools_default_role on its own pool.
+#
+# Secrets: the user password and the token secret are generated on the
+# controller (first run only) via lookup('password'), persisted in
+# pve_pools_secrets_dir/<user>.password and <user>.token (0600, owned by the
+# controller user, gitignored), then copied to pve_pools_dir on the PVE host
+# (0600, root-owned). Use them wherever the credentials are needed, e.g.
+# Terraform's bpg/proxmox provider (user + token file).
+
+# Realm of the created users. 'pve' is the local internal realm.
+pve_pools_realm: pve
+
+# One entry per project. name = pool id, user = account (user@realm), token =
+# API token name (user@realm!token), role = ACL role granted on the pool.
+pve_pools: []
+# pve_pools:
+#   - name: pocs
+#     user: pocs
+#     token: token
+#     role: PVEVMAdmin
+#   - name: k8s
+#     user: k8s
+#     token: token
+#     role: PVEVMAdmin
+
+# ACL role granted on each pool to its user. Built-in roles that make sense
+# for a per-project account: PVEVMAdmin (manage VMs), PVEVMUser (run/stop),
+# PVEAuditor (read-only). See https://pve.proxmox.com/wiki/Access_Control
+pve_pools_default_role: PVEVMAdmin
+
+# Per-pool quotas. PVE pools have no native resource quotas (they are
+# permission groupings), so the role audits them instead: each entry in
+# pve_pools may carry a quota with any of:
+#   max_vms:     max number of VMs in the pool
+#   max_cpu:     max sum of allocated CPU cores (cores * sockets)
+#   max_ram_gb:  max sum of allocated memory in GB
+#   max_disk_gb: max sum of provisioned disk size in GB
+# Usage is measured from the VMs' allocated (configured) resources, not live
+# usage. An exceeded quota is reported every run; with
+# pve_pools_quota_enforce: true it fails the play instead.
+pve_pools_quota_enforce: false
+
+# Where the pool-usage helper script is installed on the host.
+pve_pools_quota_dir: /usr/local/sbin
+pve_pools_quota_usage_script: /usr/local/sbin/pve-pool-usage
+
+# Pre-start hook (admission control): blocks VM start and migrate on the host
+# when starting a VM would push its pool over the CPU or RAM quota. Only CPU
+# and RAM are enforced here - disk sizes are reservations, not usage, and VM
+# counts are covered by the audit.
+pve_pools_quota_hook: true
+pve_pools_quota_hook_file: /etc/pve/hooks/pre-start
+# Machine-readable quota config consumed by the hook (rendered by this role).
+pve_pools_quota_conf: /etc/pve/pool-quotas.conf
+
+# Controller-side directory where lookup('password') persists the generated
+# secrets (gitignored). Files: <user>.password, <user>.token.
+pve_pools_secrets_dir: "{{ playbook_dir }}/pve_pools"
+
+# Where the generated credential files are copied on the PVE host.
+pve_pools_dir: /root/pve-credentials
