@@ -1,6 +1,6 @@
 ---
 - name: AI Server Setup
-  hosts: all
+  hosts: ai_servers
   become: true
   # The external repos role uses deb822_repository; allow it to install its
   # python3-debian requirement automatically if a host is missing it.

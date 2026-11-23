@@ -13,7 +13,14 @@
 #                controller secret file. If the token exists but its file is
 #                lost the secret cannot be recovered, so a warning is printed
 #   * pools:     created if missing
-#   * ACL:       granted if the configured role grant is missing
+#   * ACL:       the pool role is granted to both the user AND the token
+#                (PVE 9 privsep tokens resolve to the intersection of the
+#                token's and the user's grants, so user-only grants leave the
+#                token with none), plus the aux grants from
+#                pve_pools_aux_grants on storage/SDN/node paths, also for
+#                both
+#   * roles:     custom roles requested by aux grants (privs entries) are
+#                created with exactly those privileges if missing
 #
 # API notes (PVE 9):
 #   * pools live at /pools (not /access/pools); create takes --poolid
@@ -306,6 +313,118 @@
   loop_control:
     label: "{{ item.name }}"
 
+- name: Ensure ACL grant on each pool for its token
+  # PVE 9 tokens default to privsep:1, and a privsep token's effective
+  # permissions on a path are the intersection of the grants on the token
+  # and the grants on its owning user (PVE::RPCEnvironment::compile_acl_path).
+  # Granting the pool role to the user only therefore leaves the token with
+  # an empty permission set - every API call 403s - so the token must carry
+  # the pool role as well.
+  ansible.builtin.command: >-
+    pvesh set /access/acl
+    --path /pool/{{ item.name }}
+    --tokens {{ item.user }}@{{ pve_pools_realm }}!{{ item.token | default('token') }}
+    --roles {{ item.role | default(pve_pools_default_role) }}
+  register: pve_acl_token_grants
+  changed_when: true
+  loop: "{{ pve_pools }}"
+  when: >-
+    ((pve_acl_check.stdout | default('') | from_json) if (pve_acl_check.stdout | default('')) else [])
+    | selectattr('path', 'equalto', '/pool/' ~ item.name)
+    | selectattr('type', 'equalto', 'token')
+    | selectattr('ugid', 'equalto', item.user ~ '@' ~ pve_pools_realm ~ '!' ~ (item.token | default('token')))
+    | selectattr('roleid', 'equalto', item.role | default(pve_pools_default_role))
+    | list | length == 0
+  loop_control:
+    label: "{{ item.name }}"
+
+# Custom roles required by aux grants ---------------------------------------
+# An aux grant may reference a role that is not built-in (e.g. a role that
+# carries Sys.AccessNetwork, which no built-in role does). Collect the
+# distinct role names that request a privs list and create any that are
+# missing with exactly those privileges. This must precede the aux grant
+# tasks: set /access/acl fails atomically when the role does not exist.
+# (PVE 9 has no comment option on role create.)
+
+- name: Collect distinct custom role names required by aux grants
+  ansible.builtin.set_fact:
+    pve_aux_role_ids: >-
+      {{ (pve_pools_aux_grants
+          | selectattr('privs', 'defined')
+          | map(attribute='role')
+          | unique | list) }}
+
+- name: Check for existing custom roles
+  ansible.builtin.command: "pvesh get /access/roles/{{ item }}"
+  register: pve_custom_roles_check
+  changed_when: false
+  failed_when: false
+  loop: "{{ pve_aux_role_ids }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Create missing custom roles with the requested privileges
+  ansible.builtin.command: >-
+    pvesh create /access/roles
+    --roleid {{ item }}
+    --privs "{{ (pve_pools_aux_grants
+        | selectattr('privs', 'defined')
+        | selectattr('role', 'equalto', item)
+        | map(attribute='privs')
+        | first) | join(' ') }}"
+  register: pve_custom_roles_created
+  changed_when: true
+  loop: "{{ pve_aux_role_ids }}"
+  when: >-
+    (pve_custom_roles_check.results
+     | selectattr('item', 'equalto', item) | first).rc != 0
+  loop_control:
+    label: "{{ item }}"
+
+# Aux ACL grants (storage / SDN / node) --------------------------------------
+# The extra grants the bpg/proxmox provider needs to provision a VM end to
+# end (see pve_pools_aux_grants), applied to both the user and the token of
+# every pool: a privsep token's effective permissions are the intersection
+# of the grants on the token and its owning user, so both must carry them.
+
+- name: Ensure aux ACL grants for each pool user
+  ansible.builtin.command: >-
+    pvesh set /access/acl
+    --path {{ item.1.path }}
+    --users {{ item.0.user }}@{{ pve_pools_realm }}
+    --roles {{ item.1.role }}
+  register: pve_aux_user_grants
+  changed_when: true
+  loop: "{{ pve_pools | product(pve_pools_aux_grants) }}"
+  loop_control:
+    label: "{{ item.0.name }} / {{ item.1.path }}"
+  when: >-
+    ((pve_acl_check.stdout | default('') | from_json) if (pve_acl_check.stdout | default('')) else [])
+    | selectattr('path', 'equalto', item.1.path)
+    | selectattr('type', 'equalto', 'user')
+    | selectattr('ugid', 'equalto', item.0.user ~ '@' ~ pve_pools_realm)
+    | selectattr('roleid', 'equalto', item.1.role)
+    | list | length == 0
+
+- name: Ensure aux ACL grants for each pool token
+  ansible.builtin.command: >-
+    pvesh set /access/acl
+    --path {{ item.1.path }}
+    --tokens {{ item.0.user }}@{{ pve_pools_realm }}!{{ item.0.token | default('token') }}
+    --roles {{ item.1.role }}
+  register: pve_aux_token_grants
+  changed_when: true
+  loop: "{{ pve_pools | product(pve_pools_aux_grants) }}"
+  loop_control:
+    label: "{{ item.0.name }} / {{ item.1.path }}"
+  when: >-
+    ((pve_acl_check.stdout | default('') | from_json) if (pve_acl_check.stdout | default('')) else [])
+    | selectattr('path', 'equalto', item.1.path)
+    | selectattr('type', 'equalto', 'token')
+    | selectattr('ugid', 'equalto', item.0.user ~ '@' ~ pve_pools_realm ~ '!' ~ (item.0.token | default('token')))
+    | selectattr('roleid', 'equalto', item.1.role)
+    | list | length == 0
+
 # Quotas ------------------------------------------------------------------
 # PVE pools have no native resource quotas, so this section audits them:
 # a helper script sums the allocated resources of every VM in each pool and
@@ -451,6 +570,17 @@
       {% endfor %}
   when: pve_pools_quota_hook and pve_hooks_probe.stdout | default('no') == 'yes'
 
+- name: Ensure PVE hooks directory
+  # The probe removes the directory it creates, so make sure it exists again
+  # before the copy below (copy does not create parent directories).
+  ansible.builtin.file:
+    path: "{{ pve_pools_quota_hook_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: pve_pools_quota_hook and pve_hooks_probe.stdout | default('no') == 'yes'
+
 - name: Install pre-start quota hook
   ansible.builtin.copy:
     dest: "{{ pve_pools_quota_hook_file }}"
@@ -550,7 +680,15 @@
       token={{ item.token | default('token') }}
       ({{ 'created' if ((pve_tokens_check.results | selectattr('item.user', 'equalto', item.user) | first).rc != 0) else 'existing' }}),
       role={{ item.role | default(pve_pools_default_role) }}
-      (changed={{ (pve_acl_grants.results | selectattr('item.name', 'equalto', item.name) | first).changed | default(false) }})
+      (changed={{ (pve_acl_grants.results | selectattr('item.name', 'equalto', item.name) | first).changed | default(false) }}),
+      token-role (changed={{ (pve_acl_token_grants.results | selectattr('item.name', 'equalto', item.name) | first).changed | default(false) }})
   loop: "{{ pve_pools }}"
   loop_control:
     label: "{{ item.name }}"
+
+- name: Summarize aux grants changed this run
+  ansible.builtin.debug:
+    msg: >-
+      aux grants changed this run (all pools):
+      user={{ pve_aux_user_grants.results | default([]) | selectattr('changed', 'equalto', true) | list | length }},
+      token={{ pve_aux_token_grants.results | default([]) | selectattr('changed', 'equalto', true) | list | length }}

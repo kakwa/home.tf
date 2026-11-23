@@ -1,6 +1,6 @@
 ---
 - name: Hypervisor Server Setup
-  hosts: all
+  hosts: hypervisor
   become: true
   # The external repos role uses deb822_repository; allow it to install its
   # python3-debian requirement automatically if a host is missing it.
@@ -36,4 +36,4 @@
     - { role: vim, tags: ["system", "vim"] }
     - { role: zsh, tags: ["system", "zsh"] }
     - { role: proxmox, tags: ["hypervisor", "virtualization", "proxmox"] }
-    - { role: proxmox_pools, tags: ["hypervisor", "virtualization", "proxmox", "proxmox-pools"] }
+    - { role: proxmox_pools, when: pve_pools | length > 0, tags: ["hypervisor", "virtualization", "proxmox", "proxmox-pools"] }

@@ -29,10 +29,55 @@ pve_pools: []
 #     token: token
 #     role: PVEVMAdmin
 
-# ACL role granted on each pool to its user. Built-in roles that make sense
-# for a per-project account: PVEVMAdmin (manage VMs), PVEVMUser (run/stop),
+# ACL role granted on each pool to its user (and, since PVE 9, to its token as
+# well - see pve_pools_aux_grants for why). Built-in roles that make sense for
+# a per-project account: PVEVMAdmin (manage VMs), PVEVMUser (run/stop),
 # PVEAuditor (read-only). See https://pve.proxmox.com/wiki/Access_Control
 pve_pools_default_role: PVEVMAdmin
+
+# PVE node id, used for node-scoped grants (e.g. Sys.AccessNetwork for
+# downloading OS images by URL).
+pve_pools_node: pve
+
+# Auxiliary ACL grants, applied to BOTH the user and the token of every pool,
+# in addition to the pool role. These are the extra permissions the bpg/proxmox
+# provider needs to provision a VM end to end:
+#   - create/configure/start/stop/destroy VMs: the pool grant on /pool/<id>
+#     does NOT cover the VM paths - PVE pools are purely organizational and
+#     do not propagate ACLs. VM operations check /vms/<vmid>, so the pool
+#     role is granted on /vms (the parent of every VM path) as well.
+#   - download an OS image: Datastore.AllocateTemplate on the dir storage
+#     (PVEDatastoreAdmin) + Sys.AccessNetwork on the node (custom role; no
+#     built-in role carries that privilege)
+#   - allocate the VM disk: Datastore.AllocateSpace on the thin storage
+#     (PVEDatastoreUser)
+#   - attach the VM to a bridge: SDN.Use on the localnetwork zone path
+#     (PVESDNUser)
+#
+# WHY both user AND token: PVE 9 tokens default to privsep:1, and a privsep
+# token's effective permissions on a path are the *intersection* of the grants
+# on the token and the grants on its owning user (PVE::RPCEnvironment,
+# compile_acl_path). Granting only the user - the old behaviour - therefore
+# left the token with an empty permission set, so every API call 403'd.
+#
+# Each entry is { path, role }. An entry may also carry `privs` (a list of
+# privilege names) which makes the role be created with exactly those
+# privileges if it does not already exist (required for Sys.AccessNetwork,
+# which no built-in role carries).
+#
+# The same list applies to every pool (they share the host's storage and
+# bridges); scope it down by editing this variable.
+pve_pools_aux_grants:
+  # /vms covers every VM path (/vms/<vmid>); pool grants do not propagate to
+  # them (see above). Scope this down to individual VM ids if the pool account
+  # should not be able to manage VMs outside its pool.
+  - { path: /vms, role: PVEVMAdmin }
+  - { path: /storage/local, role: PVEDatastoreAdmin }
+  - { path: /storage/local-lvm, role: PVEDatastoreUser }
+  - { path: /sdn/zones/localnetwork/vmbr2, role: PVESDNUser }
+  # NOTE: PVE reserves the 'PVE' role-id namespace (case-insensitive) for
+  # built-in roles, so custom role ids must not start with 'PVE'.
+  - { path: "/nodes/{{ pve_pools_node }}", role: AccessNetwork, privs: [Sys.AccessNetwork] }
 
 # Per-pool quotas. PVE pools have no native resource quotas (they are
 # permission groupings), so the role audits them instead: each entry in

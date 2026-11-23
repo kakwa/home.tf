@@ -1,7 +1,9 @@
 ---
 # Utility VM: base roles + Certbot (OVH DNS-01) + OpenLDAP + ldapcherry + docker registry
+# Targets the `utility` group of the Terraform-generated inventory
+# (../terraform/inventory.yml); a no-op against the local inventory.yml.
 - name: Utility VM Setup
-  hosts: all
+  hosts: utility
   become: true
   # The external repos role uses deb822_repository; allow it to install its
   # python3-debian requirement automatically if a host is missing it.
