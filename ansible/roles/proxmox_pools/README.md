@@ -18,29 +18,49 @@ For every entry in `pve_pools`:
 2. Creates the API token `user@realm!token` (default token name `token`) if
    it does not exist.
 3. Creates the pool `name` if it does not exist.
-4. Grants the configured role (default `PVEVMAdmin`) on `/pools/<name>` to
-   the user, if the grant is missing or different.
+4. Grants the configured role (default `PVEVMAdmin`) on the pool to the
+   user, if the grant is missing.
 5. Audits pool usage against the entry's `quota` (see [Quotas](#quotas)).
 6. Installs a pre-start hook that blocks VM start/migrate when it would push
-   a pool over its CPU/RAM quota.
+   a pool over its CPU/RAM quota (skipped with a warning where `/etc/pve`
+   cannot hold an executable file, see [Pre-start hook](#quotas)).
 
 Everything is managed with `pvesh` (the local admin CLI), so no pre-existing
 API token or controller-side credentials are needed. All tasks are
 idempotent; re-running a converged host is a no-op.
 
+The role targets the **PVE 9** API, which differs from older releases:
+
+* Pools live at `/pools` (not `/access/pools`); create takes `--poolid`.
+* User tokens live at `/access/users/<userid>/token/<tokenid>` (singular)
+  and **PVE generates the secret** on create, returning it exactly once in
+  the JSON response; the role captures it into the controller secret file.
+  There is no `password` option for tokens.
+* ACL grants use `/access/acl` with `--path /pool/<id>` (singular),
+  `--users` and `--roles`; `GET /access/acl` has no filter options, so
+  grants are matched client-side.
+* A user's password can only be set **at creation time**; an existing
+  account whose password file was lost cannot be resynchronized via the API
+  (the role fails with instructions).
+* On PVE 9, `/etc/pve` may be backed by **pmxcfs** (the `pve-cluster` FUSE
+  filesystem), which rejects `chmod` and forces created files to 0640.
+
 ## Credentials
 
-Secrets follow the repo convention (`lookup('password', <file>)`): the value
-is generated on first use and persisted in the file, stable across runs.
-The lookup runs on the **controller**, so the secret files live there
-first, in `pve_pools_secrets_dir` (default `{{ playbook_dir }}/pve_pools`,
-i.e. `ansible/pve_pools/`, gitignored), then the role copies them to
-`pve_pools_dir` (default `/root/pve-credentials`) on the PVE host:
+Secrets live in `pve_pools_secrets_dir` (default `{{ playbook_dir }}/pve_pools`,
+i.e. `ansible/pve_pools/`, gitignored) on the **controller**, and are copied
+to `pve_pools_dir` (default `/root/pve-credentials`) on the PVE host:
 
-| File | Content | Permissions |
-| --- | --- | --- |
-| `<user>.password` | plain password for `user@realm` (GUI/login) | 0600 controller user / 0600 root on host |
-| `<user>.token` | the API token secret for `user@realm!<token>` | same |
+| File | Content | Generated | Permissions |
+| --- | --- | --- | --- |
+| `<user>.password` | plain password for `user@realm` (GUI/login) | controller, via `lookup('password', <file>)` (repo convention; stable across runs) | 0600 controller user / 0600 root on host |
+| `<user>.token` | the API token secret for `user@realm!<token>` | by **PVE** at token create (returned exactly once), captured by the role | same |
+
+On PVE 9 the token secret cannot be chosen up front: `pvesh create
+/access/users/<userid>/token/<token>` has no password option and PVE
+generates the secret, returning it once as JSON. The role parses it from
+the create output and writes the controller file immediately after
+creation.
 
 The token **id** is not in the file — it is deterministic:
 `<user>@<realm>!<token>` (e.g. `pocs@pve!token`).
@@ -92,6 +112,12 @@ adds the VM's own allocation, and exits 1 (deny) if the result exceeds the
 pool's CPU or RAM quota. Only CPU and RAM are enforced here: disk sizes are
 reservations rather than usage, and VM counts are covered by the audit.
 
+On PVE 9 hosts where `/etc/pve` is a pmxcfs FUSE mount the hook cannot be
+made executable (`chmod` is rejected, files are forced to 0640), so the
+role probes for this, skips the hook with a warning, and leaves quota
+enforcement to the audit (set `pve_pools_quota_enforce: true` to fail the
+play on breach).
+
 To deny a start attempt, the hook prints
 `pre-start: VM <id> would push pool '<pool>' CPU to N vCPU (quota M)` to
 stderr, which PVE surfaces in the start error.
@@ -122,7 +148,7 @@ pve_pools:
 | `pve_pools_quota_enforce` | `false` | Fail the play when a quota is exceeded (otherwise report only) |
 | `pve_pools_quota_dir` | `/usr/local/sbin` | Directory for the usage helper |
 | `pve_pools_quota_usage_script` | `/usr/local/sbin/pve-pool-usage` | Path of the usage helper script |
-| `pve_pools_quota_hook` | `true` | Install the pre-start hook |
+| `pve_pools_quota_hook` | `true` | Install the pre-start hook (skipped with a warning if `/etc/pve` is a pmxcfs FUSE mount that cannot hold executable files) |
 | `pve_pools_quota_hook_file` | `/etc/pve/hooks/pre-start` | Path of the pre-start hook |
 | `pve_pools_quota_conf` | `/etc/pve/pool-quotas.conf` | Machine-readable quota config for the hook |
 | `pve_pools_secrets_dir` | `{{ playbook_dir }}/pve_pools` | Controller-side secret files (gitignored) |
@@ -137,7 +163,8 @@ VMs in the pool), `PVEVMUser` (start/stop/configure existing VMs),
 
 Note: changing an entry's `role` adds the new grant; the old one is not
 removed (other grants on the same path are preserved). Delete stale grants
-manually: `pvesh delete /access/acl --userid <uid> --path /pools/<name> --role <old>`.
+manually: `pvesh set /access/acl --path /pool/<name> --users <uid>
+--roles <old> --delete 1`.
 
 ## Usage
 

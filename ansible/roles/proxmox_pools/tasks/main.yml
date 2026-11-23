@@ -416,6 +416,25 @@
     label: "{{ item.name }}"
 
 # Pre-start hook (admission control) --------------------------------------
+# On PVE 9, /etc/pve may be backed by pmxcfs (the "pve-cluster" FUSE
+# filesystem). That layer rejects chmod/chown and forces created files to
+# 0640, so an executable hook cannot be installed there. Probe for that
+# before writing anything.
+
+- name: Probe whether /etc/pve can hold an executable hook
+  # Creates a file in /etc/pve/hooks and tries to make it executable;
+  # reports yes/no. Safe on a conventional filesystem (probe file removed).
+  ansible.builtin.shell: |
+    mkdir -p /etc/pve/hooks 2>/dev/null
+    f=/etc/pve/hooks/.ansible-xprobe
+    printf x > "$f" 2>/dev/null && chmod +x "$f" 2>/dev/null
+    rc=$?
+    rm -f "$f" 2>/dev/null
+    rmdir /etc/pve/hooks 2>/dev/null  # remove the dir if we created it (empty)
+    [ $rc -eq 0 ] && echo yes || echo no
+  register: pve_hooks_probe
+  changed_when: false
+  when: pve_pools_quota_hook
 
 - name: Render pool quota config for the pre-start hook
   ansible.builtin.copy:
@@ -430,6 +449,7 @@
       {% for item in pve_pools if item.quota is defined %}
       {{ item.name }} {{ item.quota.max_cpu | default(0) }} {{ item.quota.max_ram_gb | default(0) }}
       {% endfor %}
+  when: pve_pools_quota_hook and pve_hooks_probe.stdout | default('no') == 'yes'
 
 - name: Install pre-start quota hook
   ansible.builtin.copy:
@@ -500,7 +520,22 @@
         fi
       done
       exit 0
-  when: pve_pools_quota_hook
+  when: pve_pools_quota_hook and pve_hooks_probe.stdout | default('no') == 'yes'
+
+- name: Warn when the pre-start hook cannot be installed
+  # /etc/pve is a pmxcfs FUSE mount that rejects chmod, so the hook could
+  # not be made executable; quota enforcement falls back to the audit.
+  ansible.builtin.debug:
+    msg: >-
+      pve_pools_quota_hook is enabled but /etc/pve on this host is a
+      pmxcfs (pve-cluster) FUSE filesystem that rejects chmod and forces
+      created files to 0640, so the pre-start hook and
+      {{ pve_pools_quota_conf }} were not installed. Pool quotas are still
+      audited on every run; set pve_pools_quota_enforce: true to fail the
+      play when a pool exceeds its quota.
+  when:
+    - pve_pools_quota_hook
+    - pve_hooks_probe.stdout | default('no') != 'yes'
 
 - name: Summarize PVE pool configuration
   ansible.builtin.debug:
