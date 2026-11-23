@@ -23,8 +23,23 @@ all:
           pve_pools:
             - name: pocs
               user: pocs
+              quota:
+                max_vms: 10
+                max_cpu: 20
+                max_ram_gb: 16
+                max_disk_gb: 512
             - name: k8s
               user: k8s
+              quota:
+                max_vms: 20
+                max_ram_gb: 32
+                max_disk_gb: 1024
+            - name: infra
+              user: infra
+              quota:
+                max_vms: 5
+                max_ram_gb: 8
+                max_disk_gb: 256
           # Publish the static address immediately, before facts are refreshed
           # after a network change.
           avahi_lan_ip: 192.168.1.30
