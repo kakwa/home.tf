@@ -90,9 +90,9 @@ llama_server_endpoint_metrics: true
 # For a true zero-thinking server use reasoning: off (or budget: 0).
 llama_server_reasoning: auto                  # auto | on | off
 llama_server_reasoning_effort: low            # low | medium | xhigh
-llama_server_reasoning_budget: 1024           # tokens per think block; -1 = unlimited
+llama_server_reasoning_budget: 4096           # tokens per think block; -1 = unlimited
 llama_server_reasoning_budget_message: >-
-  Budget reached. Stop thinking now and give the final answer directly.
+  [...] -- Thinking Budget Reached. Give an anwser or execute NOW.
   Do not start another thinking block.
 
 # Optional llama.cpp-level API key. The TLS proxy enforces its own Bearer
