@@ -1,0 +1,58 @@
+---
+# DNS VM – BIND (named) on port 53, Debian port of the openbsd-dns role.
+#
+# A single BIND instance does both jobs:
+#   - Authoritative master for the internal zone, with RFC 2136 TSIG dynamic
+#     updates (terraform hashicorp/dns provider).
+#   - Recursive resolver for the LAN (forwarding to upstream, DNSSEC), with
+#     adblock via an RPZ zone (the StevenBlack hosts list converted to
+#     `CNAME .` drop records).
+
+# Zone (authoritative, master)
+bind_dns_zone: "int.kakwalab.ovh"
+bind_dns_zone_dir: "/var/cache/bind"
+bind_dns_zone_file: "{{ bind_dns_zone }}.db"
+
+# TSIG key for RFC 2136 dynamic updates (terraform hashicorp/dns provider,
+# nsupdate). The secret (base64) is loaded from the gitignored
+# ansible/dns_tsig_secret.txt (or vault_bind_dns_tsig_secret) by infra-dns.yml.
+# Keep in sync with terraform's dns_tsig_key_secret (dns.auto.tfvars.json).
+bind_dns_tsig_key_name: "sec1_key"
+bind_dns_tsig_algorithm: "hmac-sha512"
+bind_dns_tsig_secret: ""
+
+# Access control: loopback + RFC 1918 private ranges
+bind_dns_allowed_query: ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+bind_dns_allowed_recursion: ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+bind_dns_allowed_transfer: ["192.168.1.0/24"]
+
+# Upstream for recursion (the VM's own upstream from cloud-init/netplan)
+bind_dns_forwarders: ["192.168.1.254"]
+bind_dns_forward_policy: "first"
+
+# SOA for the zone
+bind_dns_soa_ns: "ns1.{{ bind_dns_zone }}"
+bind_dns_soa_hostmaster: "hostmaster.{{ bind_dns_zone }}"
+bind_dns_soa_serial: 1
+bind_dns_soa_refresh: 86400
+bind_dns_soa_retry: 7200
+bind_dns_soa_expire: 3600000
+bind_dns_soa_minimum: 3600
+bind_dns_zone_ttl: 3600
+
+# Static records in the zone master. The zone file is deployed only if missing,
+# so RFC 2136 dynamic updates (e.g. terraform) persist across runs.
+bind_dns_zone_records:
+  - { name: "ns1", type: "A", value: "192.168.1.25" }
+  - { name: "dns", type: "A", value: "192.168.1.25" }
+  - { name: "ldap", type: "A", value: "192.168.1.15" }
+  - { name: "ansible-master", type: "A", value: "192.168.1.35" }
+
+# Adblock: StevenBlack hosts list (fakenews-gambling) loaded as a Response
+# Policy Zone (RPZ, RFC 8125). Each "0.0.0.0 <domain>" line becomes a
+# "CNAME ." record in the RPZ zone file, which makes named answer NXDOMAIN
+# for the domain (and anything below it).
+bind_dns_adblock_url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-gambling/hosts"
+bind_dns_adblock_hosts_file: "/etc/bind/adblock.hosts"
+bind_dns_rpz_zone: "adblock.local"
+bind_dns_adblock_zone_file: "/var/cache/bind/{{ bind_dns_rpz_zone }}.zone"

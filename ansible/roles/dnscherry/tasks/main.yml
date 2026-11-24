@@ -1,0 +1,123 @@
+---
+# DNSCherry: web UI for the BIND zone (TSIG RFC 2136) behind nginx,
+# with LDAP authentication. Same pattern as the ldapcherry role.
+
+- name: Install dnscherry package (kakwalab-pkg repo)
+  # python3-dnspython: the package declares Depends: python3-dns, but on
+  # trixie that package is py3dns (module "DNS"), not dnspython (module
+  # "dns") which dnscherry imports. Fix the package's Depends and drop this.
+  ansible.builtin.apt:
+    name:
+      - dnscherry
+      - python3-dnspython
+    state: present
+    update_cache: true
+
+- name: Ensure dnscherry config directory exists
+  ansible.builtin.file:
+    path: /etc/dnscherry
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Deploy dnscherry.ini
+  ansible.builtin.template:
+    src: dnscherry.ini.j2
+    dest: /etc/dnscherry/dnscherry.ini
+    owner: root
+    group: dnscherry
+    mode: "0640"
+  notify: restart dnscherry
+
+- name: Ensure dnscherry service is started and enabled
+  ansible.builtin.service:
+    name: dnscherry
+    state: started
+    enabled: true
+
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+  when: dnscherry_nginx_enable | default(true) | bool
+
+- name: Use Let's Encrypt paths for dnscherry nginx TLS
+  when:
+    - dnscherry_nginx_enable | default(true) | bool
+    - dnscherry_nginx_ssl_enable | default(false) | bool
+    - dnscherry_nginx_ssl_letsencrypt | default(false) | bool
+  block:
+    - name: Require certbot_letsencrypt_cert_name for dnscherry nginx TLS
+      ansible.builtin.assert:
+        that:
+          - certbot_letsencrypt_cert_name | default('') | length > 0
+        fail_msg: Run the certbot_letsencrypt role first and set certbot_letsencrypt_cert_name (see utility.yml).
+
+    - name: Point dnscherry nginx at shared Let's Encrypt certificate
+      ansible.builtin.set_fact:
+        dnscherry_nginx_ssl_cert: "/etc/letsencrypt/live/{{ certbot_letsencrypt_cert_name }}/fullchain.pem"
+        dnscherry_nginx_ssl_key: "/etc/letsencrypt/live/{{ certbot_letsencrypt_cert_name }}/privkey.pem"
+
+    - name: Stat Let's Encrypt fullchain for dnscherry nginx
+      ansible.builtin.stat:
+        path: "{{ dnscherry_nginx_ssl_cert }}"
+      register: dnscherry_le_fullchain
+      failed_when: not dnscherry_le_fullchain.stat.exists
+
+- name: Ensure nginx SSL cert directory exists for dnscherry
+  ansible.builtin.file:
+    path: "{{ dnscherry_nginx_ssl_cert_dir }}"
+    state: directory
+    mode: "0750"
+    owner: root
+    group: root
+  when: >-
+    dnscherry_nginx_enable | default(true) | bool and dnscherry_nginx_ssl_enable | default(false) | bool
+    and not (dnscherry_nginx_ssl_letsencrypt | default(false) | bool)
+
+- name: Generate self-signed SSL certificate for dnscherry nginx
+  ansible.builtin.command: >-
+    openssl req -x509 -nodes -days {{ dnscherry_nginx_ssl_valid_days }}
+    -newkey rsa:2048
+    -keyout {{ dnscherry_nginx_ssl_key }}
+    -out {{ dnscherry_nginx_ssl_cert }}
+    -subj "/CN={{ dnscherry_nginx_ssl_self_signed_cn }}"
+  args:
+    creates: "{{ dnscherry_nginx_ssl_cert }}"
+  when: >-
+    dnscherry_nginx_enable | default(true) | bool and dnscherry_nginx_ssl_enable | default(false) | bool
+    and not (dnscherry_nginx_ssl_letsencrypt | default(false) | bool)
+  notify: reload nginx
+
+- name: Deploy nginx site config for dnscherry
+  ansible.builtin.template:
+    src: nginx-dnscherry.conf.j2
+    dest: /etc/nginx/sites-available/dnscherry
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
+  when: dnscherry_nginx_enable | default(true) | bool
+
+- name: Remove default nginx site (so dnscherry can use port 80)
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  when: dnscherry_nginx_enable | default(true) | bool
+
+- name: Enable dnscherry nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/dnscherry
+    dest: /etc/nginx/sites-enabled/dnscherry
+    state: link
+  notify: reload nginx
+  when: dnscherry_nginx_enable | default(true) | bool
+
+- name: Ensure nginx is started and enabled
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true
+  when: dnscherry_nginx_enable | default(true) | bool

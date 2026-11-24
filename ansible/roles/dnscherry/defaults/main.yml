@@ -1,0 +1,50 @@
+---
+# DNSCherry: Web UI for BIND zones (TSIG RFC 2136), with LDAP authentication.
+# Debian package from the kakwalab-pkg repo (added by the repos role);
+# nginx reverse proxy in front, same pattern as the ldapcherry role.
+# Use after the bind_dns role (same TSIG key) and with the OpenLDAP server
+# reachable for authentication (ldaps).
+
+# Zone to manage (must match the bind_dns role / named.conf)
+dnscherry_zone: "{{ bind_dns_zone | default('int.kakwalab.ovh') }}"
+
+# TSIG key for RFC 2136 updates (same key as the bind_dns role)
+dnscherry_dns_ip: "127.0.0.1"
+dnscherry_tsig_algorithm: "{{ bind_dns_tsig_algorithm | default('hmac-sha512') }}"
+dnscherry_tsig_key: "{{ bind_dns_tsig_secret | default('') }}"
+
+# LDAP authentication (OpenLDAP on the LDAP VM, ldaps; self-signed cert so
+# checkcert is off, same convention as ldapcherry)
+dnscherry_ldap_uri: "ldaps://ldap.int.{{ openldap_domain | default('kakwalab.ovh') }}"
+dnscherry_ldap_userdn: "ou=people,{{ openldap_base_dn | default('dc=kakwalab,dc=ovh') }}"
+# Only members of this group can manage the zone (empty = all users in userdn)
+dnscherry_ldap_groupdn: "cn=admins,ou=groups,{{ openldap_base_dn | default('dc=kakwalab,dc=ovh') }}"
+# Service account for LDAP binds (set by the play; reuses the openldap admin
+# password so the file generated for the LDAP VM is shared)
+dnscherry_ldap_binddn: "cn=admin,{{ openldap_base_dn | default('dc=kakwalab,dc=ovh') }}"
+dnscherry_ldap_bindpassword: "{{ openldap_admin_password | default('') }}"
+dnscherry_ldap_checkcert: "off"
+
+# Listen address and port (behind nginx)
+dnscherry_listen_host: "127.0.0.1"
+dnscherry_listen_port: 8080
+
+# DNS parameters
+dnscherry_type_displayed: "A, AAAA, CNAME, MX"
+dnscherry_type_written: "A, AAAA, CNAME, MX"
+dnscherry_default_ttl: 3600
+
+# Nginx reverse proxy (expose dnscherry via nginx)
+dnscherry_nginx_enable: true
+dnscherry_nginx_server_name: "dnscherry.int.{{ openldap_domain | default('kakwalab.ovh') }}"
+dnscherry_nginx_listen_port: 80
+
+# Nginx SSL (self-signed unless dnscherry_nginx_ssl_letsencrypt + certbot_letsencrypt role)
+dnscherry_nginx_ssl_enable: true
+dnscherry_nginx_ssl_letsencrypt: false
+dnscherry_nginx_ssl_port: 443
+dnscherry_nginx_ssl_cert_dir: "/etc/nginx/ssl/dnscherry"
+dnscherry_nginx_ssl_cert: "{{ dnscherry_nginx_ssl_cert_dir }}/cert.pem"
+dnscherry_nginx_ssl_key: "{{ dnscherry_nginx_ssl_cert_dir }}/key.pem"
+dnscherry_nginx_ssl_self_signed_cn: "{{ dnscherry_nginx_server_name }}"
+dnscherry_nginx_ssl_valid_days: 3650

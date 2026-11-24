@@ -1,0 +1,19 @@
+; Zone {{ bind_dns_zone }} – master with dynamic updates (TSIG)
+; Deployed only if missing: RFC 2136 updates (e.g. terraform) persist across runs.
+$ORIGIN {{ bind_dns_zone }}.
+$TTL {{ bind_dns_zone_ttl }}
+
+@   IN  SOA  {{ bind_dns_soa_ns }}. {{ bind_dns_soa_hostmaster }}. (
+            {{ bind_dns_soa_serial }} ; serial
+            {{ bind_dns_soa_refresh }} ; refresh
+            {{ bind_dns_soa_retry }} ; retry
+            {{ bind_dns_soa_expire }} ; expire
+            {{ bind_dns_soa_minimum }} ; minimum
+)
+
+@       IN  NS  {{ bind_dns_soa_ns }}.
+
+; Static records
+{% for record in bind_dns_zone_records %}
+{{ record.name }}    IN  {{ record.type }}  {{ record.value }}
+{% endfor %}

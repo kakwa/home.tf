@@ -1,0 +1,44 @@
+# DNSCherry configuration - zone {{ dnscherry_zone }}, TSIG RFC 2136, LDAP auth
+# Managed by Ansible
+
+[global]
+server.socket_host = '{{ dnscherry_listen_host }}'
+server.socket_port = {{ dnscherry_listen_port }}
+server.thread_pool = 8
+request.show_tracebacks = False
+
+log.error_handler = 'syslog'
+log.access_handler = 'none'
+log.level = 'info'
+
+# parameters for zone "{{ dnscherry_zone }}"
+ip.{{ dnscherry_zone }} = '{{ dnscherry_dns_ip }}'
+algorithm.{{ dnscherry_zone }} = '{{ dnscherry_tsig_algorithm }}'
+key.{{ dnscherry_zone }} = '{{ dnscherry_tsig_key }}'
+
+[dns]
+default.zone = '{{ dnscherry_zone }}'
+type.displayed = '{{ dnscherry_type_displayed }}'
+type.written = '{{ dnscherry_type_written }}'
+default.ttl = '{{ dnscherry_default_ttl }}'
+
+[resources]
+template_dir = '/usr/share/dnscherry/templates/'
+
+[auth]
+# LDAP authentication (modLdap): users in {{ dnscherry_ldap_userdn }},
+# access restricted to {{ dnscherry_ldap_groupdn }}
+auth.module = 'dnscherry.auth.modLdap'
+auth.ldap.userdn = '{{ dnscherry_ldap_userdn }}'
+auth.ldap.user.filter.tmpl = '(uid=%(login)s)'
+auth.ldap.groupdn = '{{ dnscherry_ldap_groupdn }}'
+auth.ldap.group.filter.tmpl = '(member=%(userdn)s)'
+auth.ldap.binddn = '{{ dnscherry_ldap_binddn }}'
+auth.ldap.bindpassword = '{{ dnscherry_ldap_bindpassword }}'
+auth.ldap.uri = '{{ dnscherry_ldap_uri }}'
+auth.ldap.checkcert = '{{ dnscherry_ldap_checkcert }}'
+auth.ldap.timeout = 5
+
+[/static]
+tools.staticdir.on = True
+tools.staticdir.dir = '/usr/share/dnscherry/static/'

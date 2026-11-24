@@ -14,6 +14,11 @@ terraform {
     local = {
       source = "hashicorp/local"
     }
+    # RFC 2136 dynamic updates with TSIG (see dns.tf)
+    dns = {
+      source  = "hashicorp/dns"
+      version = "~> 3.4"
+    }
   }
 }
 

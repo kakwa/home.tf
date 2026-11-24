@@ -1,0 +1,69 @@
+# Managed by Ansible (bind_dns role) – do not edit by hand.
+# BIND (named): authoritative master for {{ bind_dns_zone }} + recursive
+# resolver for the LAN. Adblock: StevenBlack hosts list loaded as a
+# Response Policy Zone (RPZ, RFC 8125) – blocked domains get no response.
+
+options {
+    # Working directory: the systemd unit sets none, and named creates
+    # managed-keys.bind (dnssec-validation) in its CWD – '/' is not writable.
+    directory "{{ bind_dns_zone_dir }}";
+    listen-on port 53 { any; };
+    listen-on-v6 { none; };
+    version "none";
+    hostname "none";
+{% if bind_dns_forwarders | length > 0 %}
+    forwarders {
+{% for forwarder in bind_dns_forwarders %}
+        {{ forwarder }};
+{% endfor %}
+    };
+    forward {{ bind_dns_forward_policy }};
+{% endif %}
+    dnssec-validation auto;
+
+    # Adblock: apply the RPZ zone (generated from the StevenBlack hosts list,
+    # see tasks/main.yml). Its "CNAME ." records make named answer NXDOMAIN
+    # for blocked domains (and their subdomains).
+    response-policy {
+        zone "{{ bind_dns_rpz_zone }}";
+    };
+
+    allow-query {
+{% for net in bind_dns_allowed_query %}
+        {{ net }};
+{% endfor %}
+    };
+    allow-recursion {
+{% for net in bind_dns_allowed_recursion %}
+        {{ net }};
+{% endfor %}
+    };
+    recursion yes;
+};
+
+key {{ bind_dns_tsig_key_name }} {
+    algorithm {{ bind_dns_tsig_algorithm }};
+    secret "{{ bind_dns_tsig_secret }}";
+};
+
+zone "{{ bind_dns_zone }}." {
+    type master;
+    file "{{ bind_dns_zone_dir }}/{{ bind_dns_zone_file }}";
+    allow-update {
+        key {{ bind_dns_tsig_key_name }};
+    };
+    allow-transfer {
+        key {{ bind_dns_tsig_key_name }};
+{% for net in bind_dns_allowed_transfer %}
+        {{ net }};
+{% endfor %}
+    };
+    notify no;
+};
+
+# Adblock RPZ zone (generated, do not edit by hand)
+zone "{{ bind_dns_rpz_zone }}" {
+    type master;
+    file "{{ bind_dns_adblock_zone_file }}";
+    allow-query { none; };
+};

@@ -146,6 +146,48 @@ variable "ldap_vm" {
   }
 }
 
+# RFC 2136 DNS updates to the DNS VM's BIND (TSIG). The zone records are
+# pushed only when dns_update_server (and the TSIG key) are configured;
+# otherwise DNS record configuration is skipped entirely.
+# See dns.auto.tfvars.json (gitignored) for the local values.
+variable "dns_update_server" {
+  description = "DNS server for RFC 2136 updates (the DNS VM)"
+  type        = string
+  default     = ""
+}
+
+variable "dns_update_port" {
+  description = "Port for RFC 2136 updates (BIND listens on 53)"
+  type        = number
+  default     = 53
+}
+
+variable "dns_tsig_key_name" {
+  description = "TSIG key name for RFC 2136 (a trailing dot is added if missing)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "dns_tsig_key_algorithm" {
+  description = "TSIG algorithm for RFC 2136"
+  type        = string
+  default     = "hmac-sha512"
+}
+
+variable "dns_tsig_key_secret" {
+  description = "TSIG key secret (base64); keep in sync with ansible/dns_tsig_secret.txt"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "dns_zone" {
+  description = "DNS zone for the infra host names (trailing dot included)"
+  type        = string
+  default     = "int.kakwalab.ovh."
+}
+
 # Ansible master VM
 variable "ansible_master_vm" {
   description = "Ansible master VM identity (name is also used as the guest hostname)"

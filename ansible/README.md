@@ -11,6 +11,9 @@ Run from this directory (`ansible.cfg` sets the default inventory to the
 | `hypervisor.yml` | hypervisor (`kvm.local`) | base system roles, serial console, Talos tooling, Proxmox VE, terraform sync |
 | `ai.yml` | AI server (`ai.local`) | base system roles, llama-server (ROCm + nginx proxy), Wake-on-LAN and idle suspend |
 | `utility.yml` | utility VM | base system roles, certbot, OpenLDAP, ldapcherry, Docker registry |
+| `infra-dns.yml` | infra pool: DNS VM | base system roles, BIND (authoritative for `int.kakwalab.ovh` + TSIG dynamic updates, recursive resolver, adblock) |
+| `infra-ldap.yml` | infra pool: LDAP VM | base system roles, OpenLDAP, ldapcherry (nginx, self-signed TLS), SSH-via-LDAP |
+| `infra-ansible-master.yml` | infra pool: Ansible master VM | base system roles (Ansible control node), certbot with OVH DNS-01 for `int.kakwalab.ovh` + `*.int.kakwalab.ovh` |
 
 ## Inventory and static IPs
 

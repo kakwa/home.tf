@@ -1,0 +1,199 @@
+---
+# DNS VM: BIND (named) on port 53 – authoritative master for
+# {{ bind_dns_zone }} (TSIG dynamic updates) + recursive resolver for the LAN
+# (adblock via an RPZ zone, RFC 8125).
+# Debian port of the openbsd-dns role (knot + unbound).
+
+- name: Install BIND packages
+  ansible.builtin.apt:
+    name:
+      - bind9
+      - bind9utils
+      - bind9-dnsutils
+      - dnsutils
+    state: present
+    update_cache: true
+
+- name: Ensure BIND does not manage /etc/resolv.conf (RESOLVCONF=no)
+  ansible.builtin.lineinfile:
+    path: /etc/default/named
+    regexp: '^RESOLVCONF=.*'
+    line: "RESOLVCONF=no"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart named
+
+- name: Check for systemd-resolved
+  ansible.builtin.stat:
+    path: /etc/systemd/resolved.conf
+  register: bind_dns_resolved_stat
+
+- name: Disable systemd-resolved stub listener (BIND owns port 53)
+  ansible.builtin.lineinfile:
+    path: /etc/systemd/resolved.conf
+    regexp: '^#?DNSStubListener=.*'
+    line: "DNSStubListener=no"
+    owner: root
+    group: root
+    mode: "0644"
+  when: bind_dns_resolved_stat.stat.exists
+  notify: restart systemd-resolved
+
+- name: Fetch StevenBlack hosts list (fakenews-gambling)
+  ansible.builtin.get_url:
+    url: "{{ bind_dns_adblock_url }}"
+    dest: "{{ bind_dns_adblock_hosts_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    timeout: 30
+
+- name: Generate RPZ adblock zone from the hosts list
+  # Each "0.0.0.0 <domain>" line becomes "<domain> IN CNAME ." plus a
+  # "*.domain IN CNAME ." wildcard: the CNAME to the root is the RPZ action
+  # that makes named answer NXDOMAIN for the domain (BIND's QNAME trigger
+  # matches exact names only, hence the wildcard for subdomains).
+  ansible.builtin.shell: |
+    set -euo pipefail
+    {
+      echo '$TTL 3600'
+      echo '$ORIGIN {{ bind_dns_rpz_zone }}.'
+      echo '@ IN SOA ns1.{{ bind_dns_rpz_zone }}. hostmaster.{{ bind_dns_rpz_zone }}. ('
+      echo '    1 ; serial'
+      echo '    3600 ; refresh'
+      echo '    900 ; retry'
+      echo '    3600000 ; expire'
+      echo '    3600 ) ; minimum'
+      echo " IN NS ns1.{{ bind_dns_rpz_zone }}."
+      grep -E '^0\.0\.0\.0[[:space:]]' "{{ bind_dns_adblock_hosts_file }}" \
+        | awk '{print $2}' \
+        | grep -vE '^(0\.0\.0\.0|::1|localhost|255\.255\.255\.255)$' \
+        | sort -u \
+        | awk '{print $0 " IN CNAME ."; print "*." $0 " IN CNAME ."}'
+    } > "{{ bind_dns_adblock_zone_file }}.new"
+    if [ -f "{{ bind_dns_adblock_zone_file }}" ] && cmp -s "{{ bind_dns_adblock_zone_file }}" "{{ bind_dns_adblock_zone_file }}.new"; then
+      rm -f "{{ bind_dns_adblock_zone_file }}.new"
+      echo "unchanged"
+    else
+      mv "{{ bind_dns_adblock_zone_file }}.new" "{{ bind_dns_adblock_zone_file }}"
+      chown root:bind "{{ bind_dns_adblock_zone_file }}"
+      chmod 0644 "{{ bind_dns_adblock_zone_file }}"
+      echo "changed"
+    fi
+  args:
+    executable: /bin/bash
+  register: bind_dns_adblock_result
+  changed_when: "'changed' in bind_dns_adblock_result.stdout"
+  notify: restart named
+
+- name: Ensure the zone directory is readable by the bind user
+  ansible.builtin.file:
+    path: "{{ bind_dns_adblock_zone_file }}"
+    owner: root
+    group: bind
+    mode: "0644"
+    state: file
+
+- name: Deploy adblock update helper (manual refresh)
+  ansible.builtin.copy:
+    src: update_adblock.sh
+    dest: /usr/local/bin/update-dns-adblock
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Check if the zone file exists (preserve RFC 2136 dynamic updates)
+  ansible.builtin.stat:
+    path: "{{ bind_dns_zone_dir }}/{{ bind_dns_zone_file }}"
+  register: bind_dns_zone_stat
+
+- name: Deploy zone master for {{ bind_dns_zone }} (first run only)
+  ansible.builtin.template:
+    src: zone-master.j2
+    dest: "{{ bind_dns_zone_dir }}/{{ bind_dns_zone_file }}"
+    owner: root
+    group: bind
+    mode: "0644"
+  when: not bind_dns_zone_stat.stat.exists
+  notify: restart named
+
+- name: Deploy named.conf (RPZ adblock, TSIG, recursion)
+  ansible.builtin.template:
+    src: named.conf.j2
+    dest: /etc/bind/named.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart named
+
+- name: Make rndc.key available in named's working directory
+  # With the "directory" option set, named looks for rndc.key there (the
+  # package ships it in /etc/bind); keep rndc working.
+  ansible.builtin.copy:
+    src: /etc/bind/rndc.key
+    dest: "{{ bind_dns_zone_dir }}/rndc.key"
+    remote_src: true
+    owner: bind
+    group: bind
+    mode: "0640"
+    backup: false
+
+- name: Remove legacy redirect-zone include file (leftover from first run)
+  # The original (broken) config used per-domain "type redirect" zones in
+  # named.conf.adblock, included from named.conf. RPZ replaced that; remove
+  # the leftover so checkconf and named never parse it again.
+  ansible.builtin.file:
+    path: /etc/bind/named.conf.adblock
+    state: absent
+  notify: restart named
+
+- name: Validate zone file syntax (named-checkzone)
+  ansible.builtin.command:
+    cmd: named-checkzone "{{ bind_dns_zone }}" "{{ bind_dns_zone_dir }}/{{ bind_dns_zone_file }}"
+  register: bind_dns_zone_check
+  changed_when: false
+  failed_when: bind_dns_zone_check.rc != 0
+
+- name: Validate BIND configuration (named-checkconf)
+  # Loads named.conf including the RPZ adblock zone; fails the play cleanly on
+  # config errors instead of letting the service die at start.
+  ansible.builtin.command:
+    cmd: named-checkconf /etc/bind/named.conf
+  register: bind_dns_conf_check
+  changed_when: false
+  failed_when: bind_dns_conf_check.rc != 0
+
+- name: Reset failed state of the named service (no-op if not failed)
+  # Past start failures can leave the unit rate-limited ("Start request
+  # repeated too quickly"); reset-failed clears that so the start below works.
+  ansible.builtin.command: systemctl reset-failed named
+  changed_when: false
+
+- name: Ensure BIND is enabled and started
+  ansible.builtin.service:
+    name: named
+    state: started
+    enabled: true
+
+- name: Stat /etc/resolv.conf (systemd-resolved symlinks it by default)
+  ansible.builtin.stat:
+    path: /etc/resolv.conf
+  register: bind_dns_resolv_stat
+
+- name: Remove the systemd-resolved /etc/resolv.conf symlink
+  ansible.builtin.file:
+    path: /etc/resolv.conf
+    state: absent
+  when: bind_dns_resolv_stat.stat.islnk is defined and bind_dns_resolv_stat.stat.islnk
+
+- name: Point the VM's own resolver at BIND (127.0.0.1)
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible (bind_dns role): loopback resolver (BIND)
+      nameserver 127.0.0.1
+    dest: /etc/resolv.conf
+    owner: root
+    group: root
+    mode: "0644"
