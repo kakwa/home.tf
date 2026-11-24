@@ -1,0 +1,24 @@
+# strangle configuration for the home.tf Ansible project (target `home` in
+# strangle's collection.yml). This file lives at the project root.
+
+# The playbooks to run, in order (relative to working_dir, which defaults to
+# this directory).
+playbooks:
+  - name: hypervisors
+    playbook: ./hypervisor.yml
+    inventory: ./inventory/hypervisor.yml
+    options:
+      user: kakwa
+      become: true
+  - name: base_infra
+    playbook: ./infra.yml
+    inventory: ./inventory/infra.yml
+    options:
+      user: kakwa
+      become: true
+  - name: ai_inference
+    playbook: ./ai.yml
+    inventory: ./inventory/ai.yml
+    options:
+      user: kakwa
+      become: true

@@ -50,13 +50,13 @@ the LAN.
 - `bind_dns_tsig_key_name` / `bind_dns_tsig_algorithm` / `bind_dns_tsig_secret` –
   TSIG key for dynamic updates. The secret is loaded from the gitignored
   `ansible/dns_tsig_secret.txt` (or `vault_bind_dns_tsig_secret`) by
-  `infra-dns.yml`; the role default is empty.
+  `infra.yml`; the role default is empty.
 - `bind_dns_forwarders` – upstream servers for recursion (default: `192.168.1.254`)
 - `bind_dns_allowed_query` / `bind_dns_allowed_recursion` / `bind_dns_allowed_transfer`
   – access lists (default: loopback + RFC 1918 private ranges; transfer is
   `192.168.1.0/24`)
 - `bind_dns_zone_records` – static records written to the zone master on first
-  deploy (`ns1`, `dns`, `ldap`, `ansible-master`)
+  deploy (`ns1`, `dns`, `ldap`, `ansible-master`, `registry`)
 - `bind_dns_adblock_url` – StevenBlack hosts list to use
 - `bind_dns_rpz_zone` / `bind_dns_adblock_zone_file` – RPZ zone name and file
 

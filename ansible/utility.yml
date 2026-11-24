@@ -2,6 +2,16 @@
 # Utility VM: base roles + Certbot (OVH DNS-01) + OpenLDAP + ldapcherry + docker registry
 # Targets the `utility` group of the Terraform-generated inventory
 # (../terraform/inventory.yml); a no-op against the local inventory/ directory.
+# Bootstrap must run before facts are gathered (Python may not exist yet).
+# The role's marker makes this a no-op on already bootstrapped hosts.
+- name: Bootstrap hosts that are not ready for Ansible yet
+  hosts: utility
+  gather_facts: false
+  become: false
+  roles:
+    - role: bootstrap
+      tags: ["system", "bootstrap"]
+
 - name: Utility VM Setup
   hosts: utility
   become: true

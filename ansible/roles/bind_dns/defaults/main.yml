@@ -15,7 +15,7 @@ bind_dns_zone_file: "{{ bind_dns_zone }}.db"
 
 # TSIG key for RFC 2136 dynamic updates (terraform hashicorp/dns provider,
 # nsupdate). The secret (base64) is loaded from the gitignored
-# ansible/dns_tsig_secret.txt (or vault_bind_dns_tsig_secret) by infra-dns.yml.
+# ansible/dns_tsig_secret.txt (or vault_bind_dns_tsig_secret) by infra.yml.
 # Keep in sync with terraform's dns_tsig_key_secret (dns.auto.tfvars.json).
 bind_dns_tsig_key_name: "sec1_key"
 bind_dns_tsig_algorithm: "hmac-sha512"
@@ -49,6 +49,7 @@ bind_dns_zone_records:
   - { name: "dns", type: "A", value: "192.168.1.25" }
   - { name: "ldap", type: "A", value: "192.168.1.15" }
   - { name: "ansible-master", type: "A", value: "192.168.1.35" }
+  - { name: "registry", type: "A", value: "192.168.1.36" }
 
 # Adblock: StevenBlack hosts list (fakenews-gambling) loaded as a Response
 # Policy Zone (RPZ, RFC 8125). Each "0.0.0.0 <domain>" line becomes a

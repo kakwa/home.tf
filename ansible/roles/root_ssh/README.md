@@ -17,7 +17,8 @@ Disables direct root login over SSH on the physical hosts.
 The role no longer manages `/root/.ssh` or root `authorized_keys`. Any keys
 that were written by earlier runs are left in place but cannot be used for
 SSH login. Administer the hosts with a normal account and `sudo` —
-`bootstrap.yml` creates that account's passwordless sudo and SSH key.
+the `bootstrap` role (run by `bootstrap.yml` and every playbook) creates that
+account's passwordless sudo and SSH key.
 
 ## Variables
 

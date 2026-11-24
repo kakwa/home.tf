@@ -24,6 +24,7 @@ locals {
     "dns"            = var.dns_vm.ip
     "ldap"           = var.ldap_vm.ip
     "ansible-master" = var.ansible_master_vm.ip
+    "registry"       = var.registry_vm.ip
     "ns1"            = var.dns_vm.ip
   } : {}
 }

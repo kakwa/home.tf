@@ -11,10 +11,7 @@ Run from this directory (`ansible.cfg` sets the default inventory to the
 | `hypervisor.yml` | hypervisor (`kvm.local`) | base system roles, serial console, Talos tooling, Proxmox VE, terraform sync |
 | `ai.yml` | AI server (`ai.local`) | base system roles, llama-server (ROCm + nginx proxy), Wake-on-LAN and idle suspend |
 | `utility.yml` | utility VM | base system roles, certbot, OpenLDAP, ldapcherry, Docker registry |
-| `infra-dns.yml` | infra pool: DNS VM | base system roles, BIND (authoritative for `int.kakwalab.ovh` + TSIG dynamic updates, recursive resolver, adblock) |
-| `infra-ldap.yml` | infra pool: LDAP VM | base system roles, OpenLDAP, ldapcherry (nginx, self-signed TLS), SSH-via-LDAP |
-| `infra-ansible-master.yml` | infra pool: Ansible master VM | base system roles (Ansible control node), certbot with OVH DNS-01 for `int.kakwalab.ovh` + `*.int.kakwalab.ovh` |
-| — | infra pool: registry VM (`infra_registry`) | provisioned by OpenTofu with a 200 GB boot disk (Docker registry data) |
+| `infra.yml` | infra pool: all pool VMs (`dns`, `ldap`, `ansible-master`, `registry`) | one play; base system roles everywhere, pool-specific roles selected by the inventory group. DNS: BIND (authoritative for `int.kakwalab.ovh` + TSIG dynamic updates, recursive resolver, adblock) + DNSCherry; LDAP: OpenLDAP + ldapcherry (nginx, self-signed TLS) + SSH-via-LDAP; Ansible master: certbot with OVH DNS-01 for `int.kakwalab.ovh` + `*.int.kakwalab.ovh`; Registry: certbot (OVH DNS-01 for `registry.int.kakwalab.ovh`) + Docker registry (nginx, Let's Encrypt TLS, basic auth) |
 
 ## Inventory and static IPs
 
@@ -37,21 +34,29 @@ config from cloud-init/netplan. Use
 
 ## Bootstrap
 
-`bootstrap.yml` is the entry point for a new **host** (its steps are listed
-below). For the full **infrastructure** order — hypervisor → Proxmox pools →
+The one-time setup lives in the `bootstrap` role and is run by a short,
+fact-less play at the top of **every** playbook, so a new host is bootstrapped
+automatically on first contact. `bootstrap.yml` is a thin wrapper around that
+role (plus the static-IP play), kept for first password logins and ad-hoc hosts.
+For the full **infrastructure** order — hypervisor → Proxmox pools →
 `tofu/infra` VMs → DNS → LDAP, with the AI server handled separately — see
 [../docs/bootstrap.md](../docs/bootstrap.md).
 
-For a single new host, `bootstrap.yml`:
+The bootstrap role:
 
 1. Deploys the SSH public key, installs `sudo`, `python3`, `python3-apt` and
-   `python3-debian`, and configures passwordless sudo. This part uses only
-   `raw` tasks with fact gathering disabled, so it works on hosts with **no
-   Python installed**. Elevation is auto-detected (passwordless sudo, falling
-   back to `su`).
-2. Once Python exists, runs the `static_ip` role to apply that host's NIC → IP
-   mapping from `inventory.yml` (see the inventory section above). Hosts with
-   no mapping are skipped.
+   `python3-debian`, and configures passwordless sudo. It uses only `raw` tasks
+   with fact gathering disabled, so it works on hosts with **no Python
+   installed**. Elevation is auto-detected (passwordless sudo, falling back to
+   `su`).
+2. Writes a marker at `/etc/ansible/bootstrapped`; subsequent runs read it with
+   `raw` and skip the whole role. Remove the marker, bump
+   `bootstrap_marker_content` or pass `-e bootstrap_force=true` to re-run.
+
+`bootstrap.yml` additionally runs the `static_ip` role once Python exists, to
+apply that host's NIC → IP mapping from `inventory.yml` (see the inventory
+section above). Hosts with no mapping are skipped. Static IP stays separate
+from bootstrap so inventory address changes still apply on normal runs.
 
 Use the default inventory and `--limit` to target one host:
 

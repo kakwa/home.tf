@@ -9,15 +9,23 @@ flowchart TD
     C["Controller (this repo)"] --> B["1. bootstrap.yml<br/>limit: kvm"]
     B --> H["2. hypervisor.yml<br/>Proxmox VE + infra pool token"]
     H -->|infra@pve token| T["3. tofu/infra apply<br/>infra VMs + generated Ansible inventory"]
-    T --> D["4. infra-dns.yml<br/>BIND + DNSCherry"]
-    D --> L["5. infra-ldap.yml<br/>OpenLDAP + ldapcherry + SSH/LDAP"]
+    T --> D["4. infra.yml --limit dns<br/>BIND + DNSCherry"]
+    D --> L["5. infra.yml --limit ldap<br/>OpenLDAP + ldapcherry + SSH/LDAP"]
     L --> R["6. tofu/infra apply again<br/>RFC 2136 A records"]
+    R --> G["7. infra.yml --limit registry<br/>certbot + Docker registry"]
 
     subgraph AI["Separate track: AI server"]
         A["ai / 192.168.1.20"] --> AB["bootstrap.yml --limit ai"]
         AB --> AP["ai.yml --limit ai"]
     end
 ```
+
+Every playbook starts with a fact-less play running the `bootstrap` role, so a
+fresh host is prepared automatically on first contact. The role writes a marker
+at `/etc/ansible/bootstrapped` and skips all its work on later runs; the
+explicit `bootstrap.yml` steps below are a thin wrapper around the same role
+(plus the static-IP play) and are safe to re-run. Force a bootstrap again with
+`-e bootstrap_force=true` or by removing the marker.
 
 Order matters for two reasons:
 
@@ -36,8 +44,8 @@ Order matters for two reasons:
 - Secrets are gitignored: `ansible/pve_pools/infra.token` is generated in step 2;
   the TSIG secret must match in `ansible/dns_tsig_secret.txt` and
   `tofu/infra/dns.auto.tfvars.json`; the `ansible/openldap_*.password.txt` files
-  are generated on first use. OVH tokens are only needed for the wildcard cert
-  on `ansible-master`.
+  are generated on first use. OVH tokens are only needed for the certs on
+  `ansible-master` (wildcard) and `registry` (`registry.int.kakwalab.ovh`).
 
 ## Steps
 
@@ -53,14 +61,18 @@ cd ../tofu/infra
 tofu init
 tofu apply -var='dns_update_server='   # omit this flag if BIND is already up
 
-# 4-5. DNS, then LDAP
+# 4-5. DNS, then LDAP (one play; the pool roles are selected by inventory group)
 cd ../../ansible
-ansible-playbook --limit dns infra-dns.yml
-ansible-playbook --limit ldap infra-ldap.yml
+ansible-playbook --limit dns infra.yml
+ansible-playbook --limit ldap infra.yml
 
 # 6. Publish the RFC 2136 records now that BIND is running
 cd ../tofu/infra
 tofu apply
+
+# 7. Registry node (after its DNS record is published)
+cd ../../ansible
+ansible-playbook --limit registry infra.yml
 ```
 
 If `dns_update_server` is left empty, no DNS records are managed at all; the

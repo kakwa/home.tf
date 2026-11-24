@@ -1,4 +1,14 @@
 ---
+# Bootstrap must run before facts are gathered (Python may not exist yet).
+# The role's marker makes this a no-op on already bootstrapped hosts.
+- name: Bootstrap hosts that are not ready for Ansible yet
+  hosts: ai_servers
+  gather_facts: false
+  become: false
+  roles:
+    - role: bootstrap
+      tags: ["system", "bootstrap"]
+
 - name: AI Server Setup
   hosts: ai_servers
   become: true

@@ -1,0 +1,120 @@
+---
+# Everything remote is done with `raw`: the target may have no Python yet, so
+# module-based tasks (and fact gathering) cannot run before this point.
+
+- name: Read the bootstrap marker
+  ansible.builtin.raw: "cat '{{ bootstrap_marker_path }}' 2>/dev/null || true"
+  register: bootstrap_marker_state
+  changed_when: false
+  args:
+    warn: false
+
+- name: Decide whether bootstrap is needed
+  ansible.builtin.set_fact:
+    bootstrap_done: >-
+      {{ not bootstrap_force | bool
+         and bootstrap_marker_state.stdout | trim == bootstrap_marker_content }}
+
+- name: Report an already bootstrapped host
+  ansible.builtin.debug:
+    msg: "Bootstrap marker present on {{ inventory_hostname }} - skipping"
+  when: bootstrap_done | bool
+
+- block:
+    - name: Validate login name
+      ansible.builtin.assert:
+        that:
+          - bootstrap_login is match('^[a-zA-Z_][a-zA-Z0-9_.-]*$')
+        fail_msg: "Invalid remote login name: {{ bootstrap_login }}"
+
+    - name: Validate SSH public key
+      ansible.builtin.assert:
+        that:
+          - bootstrap_ssh_key | length > 0
+        fail_msg: "No SSH public key found at {{ bootstrap_ssh_key_path }}"
+
+    # Detection must not use elevation: on a fresh host sudo may not exist or
+    # may need a password, in which case we fall back to su.
+    - name: Check for passwordless sudo
+      ansible.builtin.raw: >-
+        command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1
+        && echo passwordless-sudo || echo su
+      register: bootstrap_elevation
+      changed_when: false
+      become: false
+      args:
+        warn: false
+
+    - name: Select become method for subsequent plays
+      ansible.builtin.set_fact:
+        ansible_become_method: >-
+          {{ bootstrap_become_method if bootstrap_become_method | length > 0
+             else ('sudo' if bootstrap_elevation.stdout | trim == 'passwordless-sudo' else 'su') }}
+
+    - name: Use an explicit become password when provided
+      ansible.builtin.set_fact:
+        ansible_become_password: "{{ bootstrap_become_password }}"
+      when: bootstrap_become_password | default('') | length > 0
+
+    - name: Install sudo, Python and the apt Python bindings
+      ansible.builtin.raw: |
+        if ! command -v python3 >/dev/null 2>&1 \
+           || ! command -v sudo >/dev/null 2>&1 \
+           || ! dpkg -s python3-apt >/dev/null 2>&1 \
+           || ! dpkg -s python3-debian >/dev/null 2>&1; then
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y sudo python3 python3-apt python3-debian
+        fi
+      become: true
+      args:
+        warn: false
+
+    # No `usermod` here: minimal images may not ship shadow-utils. The
+    # sudoers drop-in alone grants passwordless sudo.
+    - name: Configure passwordless sudo for the login
+      ansible.builtin.raw: |
+        sudoers_file=/etc/sudoers.d/'{{ bootstrap_login }}'
+        sudoers_line='{{ bootstrap_login }} ALL=(ALL:ALL) NOPASSWD: ALL'
+        mkdir -p /etc/sudoers.d
+        if [ ! -f "$sudoers_file" ] || ! grep -qxF "$sudoers_line" "$sudoers_file"; then
+          printf '%s\n' "$sudoers_line" > "$sudoers_file"
+          chmod 440 "$sudoers_file"
+        fi
+      become: true
+      args:
+        warn: false
+
+    - name: Deploy the SSH public key
+      ansible.builtin.raw: |
+        ssh_dir=/home/'{{ bootstrap_login }}'/.ssh
+        auth_keys="$ssh_dir/authorized_keys"
+        install -d -m 700 -o '{{ bootstrap_login }}' -g '{{ bootstrap_login }}' "$ssh_dir"
+        if [ ! -f "$auth_keys" ] || ! grep -qxF '{{ bootstrap_ssh_key }}' "$auth_keys"; then
+          printf '%s\n' '{{ bootstrap_ssh_key }}' >> "$auth_keys"
+        fi
+        chown '{{ bootstrap_login }}:{{ bootstrap_login }}' "$auth_keys"
+        chmod 600 "$auth_keys"
+      become: true
+      args:
+        warn: false
+
+    - name: Pin the Python interpreter for later plays
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: /usr/bin/python3
+
+    # Write the marker last: a failed bootstrap must be retried on the next run.
+    - name: Mark the host as bootstrapped
+      ansible.builtin.raw: |
+        marker='{{ bootstrap_marker_path }}'
+        mkdir -p "$(dirname "$marker")"
+        printf '%s\n' '{{ bootstrap_marker_content }}' > "$marker"
+        chmod 644 "$marker"
+      become: true
+      args:
+        warn: false
+
+    - name: Show next step
+      ansible.builtin.debug:
+        msg: "Bootstrap complete - Ansible can now run normally on {{ inventory_hostname }}"
+  when: not bootstrap_done | bool

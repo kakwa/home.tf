@@ -1,0 +1,22 @@
+---
+# One-time bootstrap of a fresh Debian/Ubuntu host: install Python and sudo,
+# grant the login passwordless sudo and deploy the controller's SSH public key.
+# The remote account must already exist (created by hand or by cloud-init).
+
+# Login used on the remote host; overridden by inventory or -e ansible_user=...
+bootstrap_login: "{{ ansible_user | default(lookup('env', 'USER')) }}"
+bootstrap_ssh_key_path: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519.pub"
+bootstrap_ssh_key: "{{ lookup('file', bootstrap_ssh_key_path, errors='ignore') | trim }}"
+
+# Empty = auto-detect: passwordless sudo if available, else su. Set explicitly
+# (e.g. -e bootstrap_become_method=sudo) when detection cannot work.
+bootstrap_become_method: ""
+# Only needed when elevation requires a password that is not supplied with -K.
+bootstrap_become_password: ""
+
+# Written after every bootstrap step succeeds. Later runs read it with `raw`
+# and skip the whole role. Bump bootstrap_marker_content to force a re-run after
+# changing the bootstrap steps, or pass -e bootstrap_force=true.
+bootstrap_marker_path: /etc/ansible/bootstrapped
+bootstrap_marker_content: "bootstrap-v1"
+bootstrap_force: false
