@@ -37,7 +37,12 @@ config from cloud-init/netplan. Use
 
 ## Bootstrap
 
-`bootstrap.yml` is the single entry point for a new host. It:
+`bootstrap.yml` is the entry point for a new **host** (its steps are listed
+below). For the full **infrastructure** order — hypervisor → Proxmox pools →
+`tofu/infra` VMs → DNS → LDAP, with the AI server handled separately — see
+[../docs/bootstrap.md](../docs/bootstrap.md).
+
+For a single new host, `bootstrap.yml`:
 
 1. Deploys the SSH public key, installs `sudo`, `python3`, `python3-apt` and
    `python3-debian`, and configures passwordless sudo. This part uses only
