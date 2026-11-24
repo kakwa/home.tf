@@ -30,6 +30,11 @@ the LAN.
   `/var/cache/bind/adblock.local.zone` (~165k domains). The CNAME-to-root is
   the RPZ action that makes named answer **NXDOMAIN** for blocked domains and
   their subdomains.
+- The generated RPZ zone header carries a **glue `A` record for the NS name**
+  (`ns1.adblock.local. IN A 127.0.0.1`). BIND will not load a master zone whose
+  NS has no address record — it logs `NS … has no address records` and the zone
+  is "not loaded due to errors", which **silently disables the whole RPZ** even
+  though `named-checkconf` passes and the zone file looks valid. Don't remove it.
 - The zone master file is deployed **only if it does not exist**, so dynamic
   updates from Terraform persist across runs. Delete
   `/var/cache/bind/int.kakwalab.ovh.db` to redeploy the static records.

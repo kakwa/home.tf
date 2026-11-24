@@ -12,6 +12,10 @@ dnscherry_zone: "{{ bind_dns_zone | default('int.kakwalab.ovh') }}"
 dnscherry_dns_ip: "127.0.0.1"
 dnscherry_tsig_algorithm: "{{ bind_dns_tsig_algorithm | default('hmac-sha512') }}"
 dnscherry_tsig_key: "{{ bind_dns_tsig_secret | default('') }}"
+# TSIG key name (named.conf: key <name>; allow-update { key <name>; }) —
+# dnscherry signs updates with this name; the default zone name is rejected
+# by named (PeerBadKey)
+dnscherry_tsig_key_name: "{{ bind_dns_tsig_key_name | default('sec1_key') }}"
 
 # LDAP authentication (OpenLDAP on the LDAP VM, ldaps; self-signed cert so
 # checkcert is off, same convention as ldapcherry)

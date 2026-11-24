@@ -4,20 +4,20 @@
     name: pynslcd
     state: restarted
 
+# Note: this used to be a `block`, which Ansible cannot notify by name
+# (only tasks are notifiable). It stayed latent until a config deploy
+# actually reported `changed`.
 - name: clear nscd cache and restart pynslcd nscd
-  block:
-    - name: Clear nscd cache
-      ansible.builtin.shell: "rm -f /var/cache/nscd/*"
-      args:
-        warn: false
-      changed_when: true
-
-    - name: Restart pynslcd and nscd
-      ansible.builtin.service:
-        name:
-          - pynslcd
-          - nscd
-        state: restarted
+  ansible.builtin.shell: |
+    set -e
+    rm -f /var/cache/nscd/* 2>/dev/null || true
+    systemctl restart pynslcd
+    # nscd ships with libnss-files; only restart it if it is installed.
+    if systemctl list-unit-files --no-legend | grep -q '^nscd\.service'; then
+      systemctl restart nscd || true
+    fi
+  args:
+    warn: false
 
 - name: restart ssh
   service:

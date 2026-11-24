@@ -11,16 +11,23 @@ log.error_handler = 'syslog'
 log.access_handler = 'none'
 log.level = 'info'
 
-# parameters for zone "{{ dnscherry_zone }}"
-ip.{{ dnscherry_zone }} = '{{ dnscherry_dns_ip }}'
-algorithm.{{ dnscherry_zone }} = '{{ dnscherry_tsig_algorithm }}'
-key.{{ dnscherry_zone }} = '{{ dnscherry_tsig_key }}'
+tools.sessions.on = True
+tools.sessions.timeout = 10
 
 [dns]
 default.zone = '{{ dnscherry_zone }}'
 type.displayed = '{{ dnscherry_type_displayed }}'
 type.written = '{{ dnscherry_type_written }}'
 default.ttl = '{{ dnscherry_default_ttl }}'
+
+[dns.zones]
+# parameters for zone "{{ dnscherry_zone }}"
+ip.{{ dnscherry_zone }} = '{{ dnscherry_dns_ip }}'
+algorithm.{{ dnscherry_zone }} = '{{ dnscherry_tsig_algorithm }}'
+key.{{ dnscherry_zone }} = '{{ dnscherry_tsig_key }}'
+# TSIG key name (must match the key in named.conf's allow-update; the
+# default zone name is rejected by named with PeerBadKey)
+name.{{ dnscherry_zone }} = '{{ dnscherry_tsig_key_name }}'
 
 [resources]
 template_dir = '/usr/share/dnscherry/templates/'

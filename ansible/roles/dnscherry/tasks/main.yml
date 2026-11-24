@@ -6,12 +6,38 @@
   # python3-dnspython: the package declares Depends: python3-dns, but on
   # trixie that package is py3dns (module "DNS"), not dnspython (module
   # "dns") which dnscherry imports. Fix the package's Depends and drop this.
+  # Also pending in the package: the TSIG key name fix (name.<zone> in
+  # [dns.zones]; _manage_record used the zone name -> PeerBadKey), fixed
+  # in the git source (~/Geek/GitHub/dnscherry); until it is repackaged the
+  # installed copy is patched by the task below (see README). Also pending
+  # in the package: KillMode=process in dnscherry.service (overridden by a
+  # drop-in below).
   ansible.builtin.apt:
     name:
       - dnscherry
       - python3-dnspython
     state: present
     update_cache: true
+
+- name: Copy TSIG key name patch script
+  # The shipped 0.1.4 signs RFC 2136 updates with the zone name as the TSIG
+  # key name; named's allow-update requires its own key name (sec1_key) and
+  # rejects the update (PeerBadKey). Same fix as the git source
+  # (~/Geek/GitHub/dnscherry), applied to the installed copy until the
+  # package is repackaged.
+  ansible.builtin.copy:
+    src: patch_tsig_key_name.py
+    dest: /usr/local/sbin/patch-dnscherry-tsig-key-name
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Patch installed dnscherry TSIG key name (idempotent)
+  ansible.builtin.command: /usr/local/sbin/patch-dnscherry-tsig-key-name
+  register: dnscherry_tsig_patch
+  # exact match: 'patched' in 'already patched' would be true (substring)
+  changed_when: (dnscherry_tsig_patch.stdout | default('')) | trim == 'patched'
+  notify: restart dnscherry
 
 - name: Ensure dnscherry config directory exists
   ansible.builtin.file:
@@ -35,6 +61,29 @@
     name: dnscherry
     state: started
     enabled: true
+
+- name: Ensure dnscherry drop-in directory exists
+  # Force cgroup kill mode for dnscherry (package ships KillMode=process):
+  # with KillMode=process a restart only signals the main PID, so a stale
+  # daemonized python can survive and keep holding :8080, and the next start
+  # fails to bind ("Port 8080 not free"). Kill the whole cgroup instead.
+  ansible.builtin.file:
+    path: /etc/systemd/system/dnscherry.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy dnscherry KillMode drop-in
+  ansible.builtin.copy:
+    content: |
+      [Service]
+      KillMode=control-group
+    dest: /etc/systemd/system/dnscherry.service.d/kill-mode.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart dnscherry
 
 - name: Install nginx
   ansible.builtin.apt:

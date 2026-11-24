@@ -11,9 +11,18 @@
   module_defaults:
     ansible.builtin.deb822_repository:
       install_python_debian: true
+  # OpenLDAP secrets live at PLAY level (not in the openldap role's vars) so
+  # every role in this play that needs them — openldap AND ssh_ldap — resolves
+  # the same cached value. (Role-level vars are scoped to that role; ssh_ldap
+  # otherwise fell back to its "changeme-readonly" default and its LDAPS bind
+  # failed with "Invalid credentials".) The lookup() caches into the gitignored
+  # .password.txt files next to this playbook.
   vars:
     openldap_domain: "kakwalab.ovh"
     openldap_fqdn: "ldap.int.{{ openldap_domain }}"
+    openldap_admin_password: "{{ vault_openldap_admin_password | default(lookup('password', playbook_dir ~ '/openldap_admin.password.txt chars=ascii_letters,digits length=24') | trim, true) }}"
+    openldap_breakglass_password: "{{ vault_openldap_breakglass_password | default(lookup('password', playbook_dir ~ '/openldap_breakglass.password.txt chars=ascii_letters,digits length=24') | trim, true) }}"
+    openldap_ssh_ldap_readonly_password: "{{ vault_openldap_ssh_ldap_readonly_password | default(lookup('password', playbook_dir ~ '/openldap_ssh_ldap_readonly.password.txt chars=ascii_letters,digits length=24') | trim, true) }}"
   roles:
     - { role: os_config, tags: ["system", "os_config"] }
     - { role: repos, tags: ["system", "repos"] }
@@ -21,12 +30,7 @@
     - { role: vim, tags: ["system", "vim"] }
     - { role: zsh, tags: ["system", "zsh"] }
     - { role: hosts_entries, tags: ["system", "hosts"] }
-    - role: openldap
-      tags: ["infra", "ldap", "openldap"]
-      vars:
-        openldap_admin_password: "{{ vault_openldap_admin_password | default(lookup('password', playbook_dir ~ '/openldap_admin.password.txt chars=ascii_letters,digits length=24') | trim, true) }}"
-        openldap_breakglass_password: "{{ vault_openldap_breakglass_password | default(lookup('password', playbook_dir ~ '/openldap_breakglass.password.txt chars=ascii_letters,digits length=24') | trim, true) }}"
-        openldap_ssh_ldap_readonly_password: "{{ vault_openldap_ssh_ldap_readonly_password | default(lookup('password', playbook_dir ~ '/openldap_ssh_ldap_readonly.password.txt chars=ascii_letters,digits length=24') | trim, true) }}"
+    - { role: openldap, tags: ["infra", "ldap", "openldap"] }
     - role: ldapcherry
       tags: ["infra", "ldap", "ldapcherry"]
       vars:

@@ -21,6 +21,9 @@ URL="https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/faken
   echo '    3600000 ; expire'
   echo '    3600 ) ; minimum'
   echo ' IN NS ns1.adblock.local.'
+  # Glue A record for the NS name: without it BIND refuses to load the zone
+  # ("NS has no address records") and the entire RPZ silently stops working.
+  echo 'ns1 IN A 127.0.0.1'
   curl -fsSL "$URL" \
     | grep -E '^0\.0\.0\.0[[:space:]]' \
     | awk '{print $2}' \

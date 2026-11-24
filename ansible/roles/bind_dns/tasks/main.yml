@@ -67,6 +67,12 @@
       echo '    3600000 ; expire'
       echo '    3600 ) ; minimum'
       echo " IN NS ns1.{{ bind_dns_rpz_zone }}."
+      # Glue A record for the NS name: BIND refuses to load a master zone whose
+      # NS has no address record ("NS has no address records" -> "not loaded due
+      # to errors"). That silently disables the entire RPZ even though the zone
+      # file is valid and named-checkconf passes. 127.0.0.1 is fine – the zone
+      # is never actually served (allow-query none).
+      echo 'ns1 IN A 127.0.0.1'
       grep -E '^0\.0\.0\.0[[:space:]]' "{{ bind_dns_adblock_hosts_file }}" \
         | awk '{print $2}' \
         | grep -vE '^(0\.0\.0\.0|::1|localhost|255\.255\.255\.255)$' \
@@ -85,7 +91,8 @@
   args:
     executable: /bin/bash
   register: bind_dns_adblock_result
-  changed_when: "'changed' in bind_dns_adblock_result.stdout"
+  # exact match: 'changed' in 'unchanged' would be true (substring)
+  changed_when: (bind_dns_adblock_result.stdout | default('')) | trim == 'changed'
   notify: restart named
 
 - name: Ensure the zone directory is readable by the bind user

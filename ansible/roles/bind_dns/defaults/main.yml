@@ -24,7 +24,9 @@ bind_dns_tsig_secret: ""
 # Access control: loopback + RFC 1918 private ranges
 bind_dns_allowed_query: ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 bind_dns_allowed_recursion: ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
-bind_dns_allowed_transfer: ["192.168.1.0/24"]
+# 127.0.0.0/8: dnscherry's read path fetches the zone over AXFR from
+# localhost (unsigned); loopback-only, so it stays off the LAN.
+bind_dns_allowed_transfer: ["127.0.0.0/8", "192.168.1.0/24"]
 
 # Upstream for recursion (the VM's own upstream from cloud-init/netplan)
 bind_dns_forwarders: ["192.168.1.254"]
