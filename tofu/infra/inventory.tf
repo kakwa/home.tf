@@ -7,6 +7,7 @@ resource "local_file" "inventory" {
     dns_vm            = var.dns_vm
     ldap_vm           = var.ldap_vm
     ansible_master_vm = var.ansible_master_vm
+    registry_vm       = var.registry_vm
     vm_admin_user     = var.vm_admin_user
   })
   filename        = "${path.module}/../../ansible/inventory/infra.yml"

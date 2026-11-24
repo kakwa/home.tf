@@ -174,3 +174,58 @@ resource "proxmox_virtual_environment_vm" "ansible_master" {
     }
   }
 }
+
+# Registry VM (Docker registry data lives on its boot disk)
+resource "proxmox_virtual_environment_vm" "registry" {
+  name      = var.registry_vm.name
+  node_name = var.pve_node
+  vm_id     = var.registry_vm.vm_id
+  pool_id   = var.pve_pool
+  machine   = "q35"
+  tags      = var.vm_tags
+  started   = true
+  on_boot   = true
+
+  cpu {
+    type  = "host"
+    cores = var.vm_cores
+  }
+
+  memory {
+    dedicated = var.vm_ram_mb
+  }
+
+  disk {
+    datastore_id = var.vm_datastore
+    interface    = "scsi0"
+    size         = var.registry_disk_size_gb
+    import_from  = proxmox_virtual_environment_download_file.debian.id
+  }
+
+  network_device {
+    bridge = var.vm_bridge
+  }
+
+  serial_device {
+    device = "socket"
+  }
+
+  initialization {
+    dns {
+      # Point at the DNS VM.
+      servers = var.registry_vm.dns
+    }
+
+    ip_config {
+      ipv4 {
+        address = "${var.registry_vm.ip}/${var.vm_subnet_mask}"
+        gateway = var.vm_gateway
+      }
+    }
+
+    user_account {
+      username = var.vm_admin_user
+      keys     = var.vm_authorized_keys
+    }
+  }
+}

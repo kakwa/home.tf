@@ -39,7 +39,8 @@ all:
               quota:
                 max_vms: 5
                 max_ram_gb: 8
-                max_disk_gb: 256
+                # dns/ldap/ansible-master: 3 x 30 GB + registry: 200 GB
+                max_disk_gb: 320
           # Publish the static address immediately, before facts are refreshed
           # after a network change.
           avahi_lan_ip: 192.168.1.30

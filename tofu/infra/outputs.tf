@@ -25,6 +25,15 @@ output "ansible_master_vm" {
   }
 }
 
+output "registry_vm" {
+  description = "Registry VM identity"
+  value = {
+    name = var.registry_vm.name
+    id   = var.registry_vm.vm_id
+    ip   = var.registry_vm.ip
+  }
+}
+
 output "inventory_file" {
   description = "Path of the generated Ansible inventory"
   value       = "${path.module}/../../ansible/inventory/infra.yml"

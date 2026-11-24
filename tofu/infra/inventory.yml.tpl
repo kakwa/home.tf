@@ -21,5 +21,10 @@ all:
         ${ansible_master_vm.name}:
           ansible_host: ${ansible_master_vm.ip}
 
+    infra_registry:
+      hosts:
+        ${registry_vm.name}:
+          ansible_host: ${registry_vm.ip}
+
   vars:
     ansible_user: ${vm_admin_user}

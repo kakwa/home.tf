@@ -43,7 +43,7 @@ variable "image_datastore" {
   default     = "local"
 }
 
-# VM sizing (infra pool quotas: 5 VMs, 8 GB RAM, 256 GB disk)
+# VM sizing (infra pool quotas: 5 VMs, 8 GB RAM, 320 GB disk)
 variable "vm_datastore" {
   description = "PVE storage for VM disks (LVM thin)"
   type        = string
@@ -54,6 +54,12 @@ variable "vm_disk_size_gb" {
   description = "VM disk size in GB"
   type        = number
   default     = 30
+}
+
+variable "registry_disk_size_gb" {
+  description = "Boot disk size in GB for the registry VM (holds the Docker registry data)"
+  type        = number
+  default     = 200
 }
 
 variable "vm_ram_mb" {
@@ -201,6 +207,22 @@ variable "ansible_master_vm" {
     name  = "ansible-master"
     vm_id = 102
     ip    = "192.168.1.35"
+    dns   = ["192.168.1.25"]
+  }
+}
+
+variable "registry_vm" {
+  description = "Registry VM identity (name is also used as the guest hostname)"
+  type = object({
+    name  = string
+    vm_id = number
+    ip    = string
+    dns   = list(string)
+  })
+  default = {
+    name  = "registry"
+    vm_id = 103
+    ip    = "192.168.1.36"
     dns   = ["192.168.1.25"]
   }
 }
